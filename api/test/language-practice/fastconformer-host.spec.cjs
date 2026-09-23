@@ -7,17 +7,28 @@ const { FastConformerHost, FASTCONFORMER_MODEL_ID } = require('../../dist/langua
 const sha = 'a'.repeat(64);
 const config = (overrides = {}) => ({ pythonExecutable: 'python3', workerPath: '/private/worker.py', modelPath: '/private/model.nemo', expectedSha256: sha, startupTimeoutMs: 100, ...overrides });
 function harness(overrides = {}) {
-  const child = new EventEmitter();
-  child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.pid = 12345;
-  child.kill = () => true;
+  const makeChild = () => {
+    const child = new EventEmitter();
+    child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough(); child.pid = 12345;
+    child.kill = () => true;
+    return child;
+  };
+  const children = [makeChild()];
   const calls = [];
-  const spawn = (...args) => { calls.push(args); return child; };
+  const spawn = (...args) => {
+    calls.push(args);
+    if (children.length === calls.length) return children[0];
+    const child = makeChild();
+    child.pid += children.length;
+    children.push(child);
+    return child;
+  };
   const signals = [];
-  const host = new FastConformerHost(config(overrides), spawn, (_child, signal) => {
+  const host = new FastConformerHost(config(overrides), spawn, (child, signal) => {
     signals.push(signal);
     if (signal === 'SIGTERM') child.emit('close', null);
   });
-  return { host, child, calls, signals };
+  return { host, get child() { return children[0]; }, children, calls, signals };
 }
 const ready = (fields = {}) => JSON.stringify({ type: 'ready', modelId: FASTCONFORMER_MODEL_ID, modelSha256: sha, ...fields }) + '\n';
 const errorIsSafe = (error) => {
@@ -126,6 +137,139 @@ test('shutdown rejects pending startup and sends TERM then KILL once under reent
   child.emit('close', null);
   await one;
   assert.deepEqual(signals, ['SIGTERM']);
+});
+
+test('does not recover after an idle child error', async () => {
+  const { host, children, calls } = harness();
+  const starting = host.start();
+  children[0].stdout.write(ready());
+  await starting;
+  children[0].emit('error', new Error('process failure'));
+  await host.shutdown();
+  await assert.rejects(host.transcribe('/audio/new.wav'), /stopped or closed/);
+  assert.equal(calls.length, 1);
+});
+
+test('does not spend recovery budget on invalid audio paths after a ready-worker close', async () => {
+  const { host, children, calls } = harness();
+  const starting = host.start();
+  children[0].stdout.write(ready());
+  await starting;
+  children[0].emit('close', 1);
+  await assert.rejects(host.transcribe('relative.wav'), /absolute audio path/);
+  const next = host.transcribe('/audio/valid.wav');
+  assert.equal(calls.length, 2);
+  children[1].stdout.write(ready());
+  await new Promise((resolve) => setImmediate(resolve));
+  const request = JSON.parse(children[1].stdin.read().toString());
+  children[1].stdout.write(JSON.stringify({ type: 'result', id: request.id, transcript: 'recovered' }) + '\n');
+  assert.equal(await next, 'recovered');
+  await host.shutdown();
+});
+
+test('stdout and stderr errors fail closed during startup, requests, and idle state', async (t) => {
+  for (const streamName of ['stdout', 'stderr']) {
+    await t.test(`${streamName} startup error`, async () => {
+      const { host, child } = harness();
+      const starting = assert.rejects(host.start(), /Could not start FastConformer worker/);
+      child[streamName].emit('error', new Error('private stream detail'));
+      await starting;
+      await host.shutdown();
+    });
+    await t.test(`${streamName} request error`, async () => {
+      const { host, child, calls } = harness();
+      const starting = host.start();
+      child.stdout.write(ready());
+      await starting;
+      const request = host.transcribe('/audio/request.wav');
+      const rejected = assert.rejects(request, /FastConformer worker failed/);
+      child[streamName].emit('error', new Error('private stream detail'));
+      await rejected;
+      await host.shutdown();
+      await assert.rejects(host.transcribe('/audio/later.wav'), /stopped or closed/);
+      assert.equal(calls.length, 1);
+    });
+  }
+  await t.test('idle stream error shuts down without recovery', async () => {
+    const { host, child, calls } = harness();
+    const starting = host.start();
+    child.stdout.write(ready());
+    await starting;
+    child.stderr.emit('error', new Error('private stream detail'));
+    await host.shutdown();
+    await assert.rejects(host.transcribe('/audio/later.wav'), /stopped or closed/);
+    assert.equal(calls.length, 1);
+  });
+});
+
+test('recovers once after ready-worker close on a later request without replaying death', async () => {
+  const { host, children, calls } = harness();
+  const starting = host.start();
+  children[0].stdout.write(ready());
+  await starting;
+  const first = host.transcribe('/audio/first.wav');
+  const firstRejected = assert.rejects(first, /worker closed/);
+  children[0].emit('close', 1);
+  await firstRejected;
+
+  const second = host.transcribe('/audio/second.wav');
+  assert.equal(calls.length, 2);
+  children[1].stdout.write(ready());
+  await new Promise((resolve) => setImmediate(resolve));
+  const request = JSON.parse(children[1].stdin.read().toString());
+  assert.notEqual(request.id, undefined);
+  children[1].stdout.write(JSON.stringify({ type: 'result', id: request.id, transcript: 'recovered' }) + '\n');
+  assert.equal(await second, 'recovered');
+  await host.shutdown();
+});
+
+test('consumes the only recovery attempt even when replacement startup fails', async () => {
+  const { host, children, calls } = harness();
+  const starting = host.start();
+  children[0].stdout.write(ready());
+  await starting;
+  children[0].emit('close', 1);
+  const replacement = host.transcribe('/audio/new.wav');
+  children[1].emit('close', 1);
+  await assert.rejects(replacement, /cancelled/);
+  await assert.rejects(host.transcribe('/audio/third.wav'), /stopped or closed/);
+  assert.equal(calls.length, 2);
+  await host.shutdown();
+});
+
+test('does not recover after explicit shutdown and makes concurrent recovery requests single-flight', async () => {
+  const { host, children, calls } = harness();
+  const starting = host.start();
+  children[0].stdout.write(ready());
+  await starting;
+  children[0].emit('close', 1);
+  const replacement = host.transcribe('/audio/new.wav');
+  await assert.rejects(host.transcribe('/audio/overlap.wav'), /already in flight/);
+  await host.shutdown();
+  await assert.rejects(replacement, /cancelled/);
+  assert.equal(calls.length, 2);
+  await assert.rejects(host.transcribe('/audio/after-stop.wav'), /stopped or closed/);
+});
+
+test('ignores stale previous-child events after replacement becomes current', async () => {
+  const { host, children, calls } = harness();
+  const starting = host.start();
+  children[0].stdout.write(ready());
+  await starting;
+  children[0].emit('close', 1);
+  const replacement = host.transcribe('/audio/new.wav');
+  children[1].stdout.write(ready());
+  await new Promise((resolve) => setImmediate(resolve));
+  children[0].stdout.write('stale output\n');
+  children[0].stdout.emit('error', new Error('stale stdout'));
+  children[0].stderr.emit('error', new Error('stale stderr'));
+  children[0].emit('error', new Error('stale'));
+  children[0].emit('close', 1);
+  const request = JSON.parse(children[1].stdin.read().toString());
+  children[1].stdout.write(JSON.stringify({ type: 'result', id: request.id, transcript: 'still alive' }) + '\n');
+  assert.equal(await replacement, 'still alive');
+  assert.equal(calls.length, 2);
+  await host.shutdown();
 });
 
 test('shutdown escalates to KILL after the bounded TERM grace', async () => {

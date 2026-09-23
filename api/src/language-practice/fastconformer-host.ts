@@ -64,6 +64,8 @@ export class FastConformerHost {
   private stderr = ''
   private closed = false
   private ready = false
+  private replacementEligible = false
+  private replacementUsed = false
 
   constructor(
     private readonly config: HostConfig,
@@ -92,7 +94,19 @@ export class FastConformerHost {
           '--model-sha256', this.config.expectedSha256,
         ], { shell: false, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
         this.child = child
+        const onStreamError = () => {
+          if (this.child !== child) return
+          if (this.startup) this.fail('Could not start FastConformer worker')
+          else if (this.pendingRequest) this.failRequest('FastConformer worker failed')
+          else {
+            this.ready = false
+            void this.shutdown()
+          }
+        }
+        child.stdout?.on('error', onStreamError)
+        child.stderr?.on('error', onStreamError)
         child.stdin?.on('error', () => {
+          if (this.child !== child) return
           if (this.startup) this.fail('Could not start FastConformer worker')
           else if (this.pendingRequest) this.failRequest('FastConformer worker failed')
           else if (this.ready) {
@@ -100,19 +114,36 @@ export class FastConformerHost {
             void this.shutdown()
           }
         })
-        child.stdout?.on('data', (chunk: Buffer) => this.readStdout(chunk))
+        child.stdout?.on('data', (chunk: Buffer) => {
+          if (this.child === child) this.readStdout(chunk)
+        })
         child.stderr?.on('data', (chunk: Buffer) => {
-          this.stderr = (this.stderr + chunk.toString()).slice(-MAX_STDERR_BYTES)
+          if (this.child === child) this.stderr = (this.stderr + chunk.toString()).slice(-MAX_STDERR_BYTES)
         })
         child.once('error', () => {
+          if (this.child !== child) return
           if (this.startup) this.fail('Could not start FastConformer worker')
-          else this.failRequest('FastConformer worker failed')
+          else if (this.pendingRequest) this.failRequest('FastConformer worker failed')
+          else {
+            this.ready = false
+            void this.shutdown()
+          }
         })
         child.once('close', () => {
+          if (this.child !== child) return
+          const wasReady = this.ready
           this.closed = true
           this.ready = false
           if (this.startup) this.fail('FastConformer worker closed during startup')
-          else this.failRequest('FastConformer worker closed')
+          else {
+            this.replacementEligible = wasReady && !this.shutdownPromise
+            if (this.pendingRequest) {
+              const request = this.pendingRequest
+              this.clearPendingRequest(request)
+              request.reject(new Error('FastConformer worker closed'))
+              this.responseBuffer = Buffer.alloc(0)
+            }
+          }
         })
       } catch {
         this.fail('Could not start FastConformer worker')
@@ -122,9 +153,7 @@ export class FastConformerHost {
   }
 
   transcribe(audioPath: string): Promise<string> {
-    if (this.shutdownPromise || this.closed || (this.startPromise && !this.ready && !this.startup)) {
-      return Promise.reject(new Error('FastConformer host is stopped or closed'))
-    }
+    if (this.shutdownPromise) return Promise.reject(new Error('FastConformer host is stopped or closed'))
     if (this.pendingRequest) return Promise.reject(new Error('FastConformer request already in flight'))
     if (typeof audioPath !== 'string' || !isAbsolute(audioPath)) {
       return Promise.reject(new Error('Invalid absolute audio path'))
@@ -136,6 +165,21 @@ export class FastConformerHost {
       return Promise.reject(new Error('Invalid absolute audio path'))
     }
 
+    if (this.closed) {
+      if (!this.replacementEligible || this.replacementUsed) {
+        return Promise.reject(new Error('FastConformer host is stopped or closed'))
+      }
+      this.replacementUsed = true
+      this.replacementEligible = false
+      this.startPromise = undefined
+      this.closed = false
+      this.stdout = ''
+      this.responseBuffer = Buffer.alloc(0)
+      this.stderr = ''
+    }
+    if (this.startPromise && !this.ready && !this.startup) {
+      return Promise.reject(new Error('FastConformer host is stopped or closed'))
+    }
     const timeoutMs = this.config.requestTimeoutMs ?? DEFAULT_REQUEST_MS
     const promise = new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => {
