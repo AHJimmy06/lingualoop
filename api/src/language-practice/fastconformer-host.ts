@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
+import { FASTCONFORMER_MODEL_ID, FastConformerProtocolError, parseReady } from './fastconformer-protocol'
 
-export const FASTCONFORMER_MODEL_ID = 'nvidia/stt_en_fastconformer_hybrid_large_pc'
+export { FASTCONFORMER_MODEL_ID } from './fastconformer-protocol'
 const MAX_STARTUP_MS = 30_000
 const MAX_STDOUT_BYTES = 8_192
 const MAX_STDERR_BYTES = 4_000
@@ -95,16 +96,13 @@ export class FastConformerHost {
     const newline = this.stdout.indexOf('\n')
     if (newline < 0) return
     const line = this.stdout.slice(0, newline)
-    let value: unknown
-    try { value = JSON.parse(line) } catch {
-      this.fail('FastConformer worker returned malformed startup output')
-      return
-    }
-    if (!value || typeof value !== 'object' ||
-        (value as Record<string, unknown>).type !== 'ready' ||
-        (value as Record<string, unknown>).modelId !== FASTCONFORMER_MODEL_ID ||
-        (value as Record<string, unknown>).modelSha256 !== this.config.expectedSha256) {
-      this.fail('FastConformer worker reported an unexpected model identity')
+    try {
+      parseReady(line, this.config.expectedSha256)
+    } catch (error) {
+      const message = error instanceof FastConformerProtocolError && error.code === 'INVALID_LINE'
+        ? 'FastConformer worker returned malformed startup output'
+        : 'FastConformer worker reported an unexpected model identity'
+      this.fail(message)
       return
     }
     if (/\S/.test(this.stdout.slice(newline + 1))) {
