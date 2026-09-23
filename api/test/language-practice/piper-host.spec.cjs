@@ -32,15 +32,25 @@ function fakeChild() {
   return child;
 }
 
-function harness(config, onSpawn = () => {}, onSignal = () => {}) {
+function harness(config, onSpawn = () => {}, onSignal = () => {}, removeDirectory) {
   let spawnCount = 0;
   const child = fakeChild();
   const host = new PiperHost(config, (executable, args, options) => {
     spawnCount++;
     onSpawn(executable, args, options, child);
     return child;
-  }, (process, signal) => onSignal(process, signal));
+  }, (process, signal) => onSignal(process, signal), removeDirectory);
   return { host, child, get spawnCount() { return spawnCount; } };
+}
+
+function tinyWav() {
+  const wav = Buffer.alloc(46);
+  wav.write('RIFF', 0); wav.writeUInt32LE(38, 4); wav.write('WAVEfmt ', 8);
+  wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(22050, 24); wav.writeUInt32LE(44100, 28);
+  wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34);
+  wav.write('data', 36); wav.writeUInt32LE(2, 40); wav.writeInt16LE(0, 44);
+  return wav;
 }
 
 const genericFailure = (promise) => assert.rejects(promise, (error) => {
@@ -64,6 +74,101 @@ test('verifies synthetic artifacts before spawn and accepts split readiness mark
   h.child.stderr.write('ized piper model');
   await started;
   await h.host.shutdown();
+});
+
+test('synthesis writes a unique WAV request, accepts fragmented echo, and returns validated audio', async (t) => {
+  const config = await fixture(t);
+  let outputDirectory;
+  const h = harness(config, (_exe, _args, _opts, child) => {
+    setImmediate(() => child.stderr.write('Initialized piper'));
+    child.stdin.on('data', async (bytes) => {
+      const request = JSON.parse(bytes.toString());
+      outputDirectory = path.dirname(request.output_file);
+      assert.equal(path.basename(request.output_file), 'output.wav');
+      assert.notEqual(outputDirectory, config.modelPath);
+      await fs.writeFile(request.output_file, tinyWav());
+      child.stdout.write(Buffer.from(request.output_file.slice(0, 4)));
+      child.stdout.write(Buffer.from(request.output_file.slice(4) + '\n'));
+    });
+  });
+  const audio = await h.host.synthesize('hello');
+  assert.deepEqual(audio, tinyWav());
+  await assert.rejects(fs.access(outputDirectory));
+  await h.host.shutdown();
+});
+
+test('cleanup failure rejects instead of returning audio', async (t) => {
+  const config = await fixture(t);
+  let outputPath;
+  const h = harness(config, (_exe, _args, _opts, child) => {
+    setImmediate(() => child.stderr.write('Initialized piper'));
+    child.stdin.on('data', async (bytes) => {
+      outputPath = JSON.parse(bytes.toString()).output_file;
+      await fs.writeFile(outputPath, tinyWav());
+      child.stdout.write(`${outputPath}\n`);
+    });
+  }, (child, signal) => { if (signal === 'SIGTERM') setImmediate(() => child.emit('close', 0, null)); },
+  async () => { throw new Error('/private/remove-failure'); });
+  await genericFailure(h.host.synthesize('cleanup failure'));
+  assert.equal(path.basename(outputPath), 'output.wav');
+  await assert.doesNotReject(fs.access(outputPath));
+  await fs.rm(path.dirname(outputPath), { recursive: true, force: true });
+  await h.host.shutdown();
+});
+
+test('busy reservation is synchronous through startup and malformed, duplicate, or unsolicited output is terminal', async (t) => {
+  const config = await fixture(t);
+  config.requestTimeoutMs = 20;
+  const h = harness(config, (_exe, _args, _opts, child) => setImmediate(() => child.stderr.write('Initialized piper')));
+  const first = h.host.synthesize('first');
+  await genericFailure(h.host.synthesize('second'));
+  await genericFailure(first);
+  await h.host.shutdown();
+
+  for (const response of ['mismatch', 'duplicate']) {
+    const cfg = await fixture(t);
+    const broken = harness(cfg, (_exe, _args, _opts, child) => {
+      setImmediate(() => child.stderr.write('Initialized piper'));
+      child.stdin.on('data', (bytes) => {
+        const request = JSON.parse(bytes.toString());
+        child.stdout.write(response === 'mismatch' ? 'wrong\n' : `${request.output_file}\n${request.output_file}\n`);
+      });
+    });
+    await genericFailure(broken.host.synthesize('test'));
+    await broken.host.shutdown();
+  }
+});
+
+test('request timeout and child/stream errors reject without exposing details', async (t) => {
+  const config = await fixture(t);
+  config.requestTimeoutMs = 20;
+  let timedOutDirectory;
+  const h = harness(config, (_exe, _args, _opts, child) => {
+    setImmediate(() => child.stderr.write('Initialized piper'));
+    child.stdin.on('data', (bytes) => { timedOutDirectory = path.dirname(JSON.parse(bytes.toString()).output_file); });
+  });
+  await genericFailure(h.host.synthesize('timeout'));
+  await assert.rejects(fs.access(timedOutDirectory));
+  await h.host.shutdown();
+  h.child.stdout.write('/stale\\n');
+  await genericFailure(h.host.synthesize('stale'));
+  await h.host.shutdown();
+
+  const cfg = await fixture(t);
+  const broken = harness(cfg, (_exe, _args, _opts, child) => {
+    setImmediate(() => child.stderr.write('Initialized piper'));
+    child.stdin.on('data', () => child.stdout.emit('error', new Error('/private/path')));
+  });
+  await genericFailure(broken.host.synthesize('error'));
+  await broken.host.shutdown();
+});
+
+test('shutdown during startup rejects the reserved synthesis request', async (t) => {
+  const config = await fixture(t);
+  const h = harness(config);
+  const synthesis = h.host.synthesize('cancel');
+  await h.host.shutdown();
+  await genericFailure(synthesis);
 });
 
 test('digest failure rejects without spawning', async (t) => {
