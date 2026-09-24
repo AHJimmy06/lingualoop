@@ -5,8 +5,11 @@ import { authSession } from '../../auth-session'
 import {
   LanguagePracticeClient,
   LanguagePracticeClientError,
+  type LanguagePracticeTurnResponse,
   type SessionDetail,
 } from './language-practice-client'
+import { canRecordTurn, nextTurnState, type PendingTurn } from './live-turn-state'
+import PracticeRecorder from './PracticeRecorder.vue'
 import { anchorTimer, projectRemainingMs, type TimerAnchor } from './live-session-state'
 
 const route = useRoute()
@@ -20,6 +23,12 @@ const session = ref<SessionDetail | null>(null)
 const loading = ref(true)
 const refreshing = ref(false)
 const error = ref('')
+const turnStatus = ref('')
+const pendingTurn = ref<PendingTurn | null>(null)
+const submittingTurn = ref(false)
+const audioUrl = ref('')
+const audioElement = ref<HTMLAudioElement | null>(null)
+const playbackError = ref('')
 const monotonicNow = ref(0)
 const remainingMs = computed(() => anchor ? projectRemainingMs(anchor, monotonicNow.value) : 0)
 const remainingSeconds = computed(() => Math.ceil(remainingMs.value / 1000))
@@ -29,6 +38,82 @@ let disposed = false
 let requestInFlight = false
 let expiryCheckRequested = false
 let navigatingToCompletion = false
+
+function replaceAudioUrl(url: string): void {
+  if (audioUrl.value) URL.revokeObjectURL(audioUrl.value)
+  audioUrl.value = url
+  playbackError.value = ''
+}
+
+function setResponseAudio(response: LanguagePracticeTurnResponse): void {
+  if (!response.audioBase64 || response.audioMimeType !== 'audio/wav') {
+    replaceAudioUrl('')
+    return
+  }
+  const binary = atob(response.audioBase64)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index)
+  replaceAudioUrl(URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' })))
+}
+
+function recorded(blob: Blob): void {
+  if (!canRecordTurn(pendingTurn.value, submittingTurn.value, session.value?.status === 'ACTIVE' && remainingMs.value > 0)) return
+  const turn = { blob, clientTurnId: crypto.randomUUID() }
+  pendingTurn.value = turn
+  turnStatus.value = 'Sending your recorded turn…'
+  void sendPendingTurn(turn, false)
+}
+
+async function sendPendingTurn(turn: PendingTurn, checking = true): Promise<void> {
+  const requestedSessionId = sessionId.value
+  if (pendingTurn.value !== turn || submittingTurn.value || !requestedSessionId) return
+  submittingTurn.value = true
+  turnStatus.value = checking ? 'Checking the same recorded turn…' : 'Sending your recorded turn…'
+  error.value = ''
+  try {
+    const response = await client.submitTurn(requestedSessionId, turn.blob, turn.clientTurnId)
+    if (disposed || sessionId.value !== requestedSessionId || pendingTurn.value !== turn) return
+    session.value = response.session
+    monotonicNow.value = performance.now()
+    anchor = anchorTimer(response.session.remainingMs, monotonicNow.value)
+    expiryCheckRequested = response.session.status !== 'ACTIVE' || response.session.remainingMs === 0
+    if (nextTurnState(response.status) === 'pending') {
+      turnStatus.value = 'This turn is still processing. Check the same turn to retrieve its result; it will not be submitted as a new turn.'
+    } else {
+      pendingTurn.value = null
+      if (response.status === 'FAILED') {
+        turnStatus.value = 'This turn failed. It cannot be retried with the same ID; record a new turn if the session is still active.'
+        replaceAudioUrl('')
+      } else {
+        turnStatus.value = 'Turn completed and saved.'
+        setResponseAudio(response)
+      }
+      if (response.session.status === 'EXPIRED' || response.session.status === 'COMPLETED') await navigateToCompletion(requestedSessionId)
+    }
+  } catch (cause) {
+    if (!disposed && sessionId.value === requestedSessionId && pendingTurn.value === turn) {
+      turnStatus.value = 'The result is uncertain. Check the same turn with the same recording and ID; do not record another turn yet.'
+      error.value = cause instanceof LanguagePracticeClientError && cause.kind === 'unauthenticated'
+        ? 'Sign in may be required. Checking again reuses this turn ID and recording.'
+        : ''
+    }
+  } finally {
+    if (pendingTurn.value === turn) submittingTurn.value = false
+    if (!disposed && sessionId.value === requestedSessionId && !pendingTurn.value && session.value?.status === 'ACTIVE' && remainingMs.value === 0) {
+      expiryCheckRequested = false
+      void loadSession()
+    }
+  }
+}
+
+async function replayAudio(): Promise<void> {
+  playbackError.value = ''
+  try {
+    await audioElement.value?.play()
+  } catch {
+    playbackError.value = 'Playback did not start. Use the audio player controls to try again.'
+  }
+}
 
 const topicLabels: Record<string, string> = {
   travel: 'Travel', work: 'Work', studies: 'Studies', 'everyday-conversation': 'Everyday conversation',
@@ -43,7 +128,7 @@ function updateClock(): void {
 }
 
 async function loadSession(): Promise<void> {
-  if (disposed || requestInFlight) return
+  if (disposed || requestInFlight || pendingTurn.value) return
   requestInFlight = true
   refreshing.value = true
   if (!session.value) loading.value = true
@@ -90,6 +175,10 @@ watch(sessionId, (id) => {
   session.value = null
   anchor = null
   error.value = ''
+  turnStatus.value = ''
+  pendingTurn.value = null
+  submittingTurn.value = false
+  replaceAudioUrl('')
   loading.value = true
   expiryCheckRequested = false
   navigatingToCompletion = false
@@ -105,6 +194,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   disposed = true
+  replaceAudioUrl('')
   if (timer !== null) clearInterval(timer)
   window.removeEventListener('focus', refreshOnFocus)
   document.removeEventListener('visibilitychange', refreshWhenVisible)
@@ -148,11 +238,24 @@ onBeforeUnmount(() => {
         </ol>
       </section>
 
-      <section class="turn-notice" role="status">
-        <h2>Voice turn controls are connecting</h2>
-        <p>This step shows saved session details only. Recording and conversation responses are not available in this slice.</p>
+      <section class="turn-notice" aria-labelledby="turn-controls-title">
+        <h2 id="turn-controls-title">Voice turn</h2>
+        <p v-if="pendingTurn">A turn is pending. Keep this page open; no new recording is allowed until it resolves.</p>
+        <p v-else-if="session.status !== 'ACTIVE' || remainingMs === 0">This session has expired. You can no longer record a new turn.</p>
+        <p v-else>Record up to 20 seconds. If the result is uncertain, checking again reuses the exact recording and turn ID.</p>
+        <PracticeRecorder v-if="!pendingTurn" :disabled="session.status !== 'ACTIVE' || remainingMs === 0" @recorded="recorded" />
+        <button v-if="pendingTurn" type="button" class="refresh-button" :disabled="submittingTurn" @click="sendPendingTurn(pendingTurn)">
+          {{ submittingTurn ? 'Checking…' : 'Check same turn' }}
+        </button>
+        <p v-if="turnStatus" role="status">{{ turnStatus }}</p>
+        <p v-if="pendingTurn && remainingMs === 0" role="status">The session timer has expired while this turn is unresolved. Keep the recording pending and use Check same turn; no new turn or report request will be made automatically.</p>
+        <div v-if="audioUrl" class="response-audio">
+          <audio ref="audioElement" :src="audioUrl" controls preload="none" aria-label="Saved assistant audio response" />
+          <button type="button" class="refresh-button" @click="replayAudio">Replay response</button>
+          <p v-if="playbackError" role="status">{{ playbackError }}</p>
+        </div>
       </section>
-      <p v-if="remainingMs === 0 && session.status === 'ACTIVE'" class="feedback" role="status">
+      <p v-if="remainingMs === 0 && session.status === 'ACTIVE' && !pendingTurn" class="feedback" role="status">
         Time is up. Checking the session status before opening its report…
       </p>
       <p v-if="error" class="feedback error" role="alert">{{ error }}</p>
