@@ -1,6 +1,6 @@
 # LinguaLoop
 
-LinguaLoop is an independent starting point for a language-practice application. This repository contains Vue/Vite and Nest API applications, Google login, and bounded protected speech endpoints; it is **not complete or production-ready**. Practice-turn orchestration and coaching are not included, and local speech still requires controlled real-runtime and browser acceptance.
+LinguaLoop is an independent starting point for a language-practice application. This repository contains Vue/Vite and Nest API applications, Google login, and bounded protected speech endpoints; it is **not complete or production-ready**. An inert, dependency-injected practice-turn orchestration unit exists, but is not registered or connected to an HTTP route; local speech still requires controlled real-runtime and browser acceptance.
 
 ## Development
 
@@ -176,7 +176,7 @@ docker run --rm --network lingualoop-postgres-net \
   -w /app node:24-bookworm-slim node dist/db/migrate.js
 ```
 
-The runner verifies SHA-256 checksums in `lingualoop_schema_migrations` and applies exactly migrations `001`–`007` in order, including owner-scoped practice sessions and the five-minute turn-lease definition. An initial empty database reports `7 applied`; an unchanged repeat reports `0 applied`. On the existing local database, adding `005` and `006` reported `2 applied` on 2026-09-24; migration `007` updates only the reservation function's lease duration. The CLI is not run by API/Nest startup. The Nest runtime uses one shared PostgreSQL query executor for readiness and auth/practice stores; constructing stores does not query PostgreSQL. Only protected practice options and owned session detail are exposed: creating sessions, processing turns, coaching, and reports are not yet connected.
+The runner verifies SHA-256 checksums in `lingualoop_schema_migrations` and applies exactly migrations `001`–`007` in order, including owner-scoped practice sessions and the five-minute turn-lease definition. An initial empty database reports `7 applied`; an unchanged repeat reports `0 applied`. On the existing local database, adding `005` and `006` reported `2 applied` on 2026-09-24; migration `007` updates only the reservation function's lease duration. The CLI is not run by API/Nest startup. The Nest runtime uses one shared PostgreSQL query executor for readiness and auth/practice stores; constructing stores does not query PostgreSQL. Only protected practice options and owned session detail are exposed: creating sessions, processing turns, coaching, and reports are not yet connected. The unregistered `LanguagePracticeTurnService` composes required injected owner-filtered stores, bounded transcription, the coach adapter, and local synthesis; it performs no provider construction or network work itself. Its caller-owned audio buffer contract is explicitly non-mutating, and idempotent replays return the stored turn without inference or audio.
 
 For scoped local access after the container is running, open `psql` inside it:
 
