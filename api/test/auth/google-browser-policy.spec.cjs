@@ -118,6 +118,20 @@ test('requires exact Origin equality including port; never accepts absent Origin
   assert.equal(p.isAllowedRefreshOrLogoutOrigin('null'), false);
 });
 
+test('optional logout cookie accepts absence but strictly validates any present cookie header', () => {
+  const p = policy();
+  const credential = `${'a'.repeat(36)}.${'B'.repeat(43)}`;
+  assert.equal(p.readOptionalRefreshCredential(undefined), undefined);
+  assert.equal(p.readOptionalRefreshCredential('other=value'), undefined);
+  assert.equal(p.readOptionalRefreshCredential(`__Host-lingualoop-refresh=${credential}`), credential);
+  for (const header of [
+    '', 'broken', '__Host-lingualoop-refresh="quoted"',
+    `__Host-lingualoop-refresh=${credential}; __Host-lingualoop-refresh=${credential}`,
+  ]) {
+    assert.throws(() => p.readOptionalRefreshCredential(header), (error) => error.message === 'Google login could not be completed.');
+  }
+});
+
 test('refresh cookie parsing requires one syntactically valid target cookie', () => {
   const p = policy();
   const credential = `${'a'.repeat(36)}.${'B'.repeat(43)}`;

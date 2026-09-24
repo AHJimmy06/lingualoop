@@ -1,13 +1,17 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const http = require('node:http');
 const { NestFactory } = require('@nestjs/core');
 const { Module } = require('@nestjs/common');
 const { HealthController } = require('../dist/health.controller.js');
 const { LINGUALOOP_QUERY_EXECUTOR } = require('../dist/db/postgres.js');
 const { GoogleAuthController, GOOGLE_AUTH_RATE_LIMITER, GoogleAuthRateLimiter } = require('../dist/auth/google-auth.controller.js');
-const { GOOGLE_AUTH_FLOW, REFRESH_SESSION } = require('../dist/auth/google-auth.providers.js');
+const { ConfiguredVerifiedRequestGuard, GOOGLE_AUTH_FLOW, REFRESH_SESSION } = require('../dist/auth/google-auth.providers.js');
+const { LINGUALOOP_IDENTITY_STORE, LINGUALOOP_SESSION_STORE } = require('../dist/auth/auth-store.providers.js');
+const { LinguaLoopTokenService } = require('../dist/auth/lingualoop-token.service.js');
 const { GOOGLE_BROWSER_POLICY, createGoogleBrowserPolicy } = require('../dist/auth/google-browser-policy.js');
 const { GoogleCodeExchange } = require('../dist/auth/google-code-exchange.js');
+const { InvalidBearerTokenError } = require('../dist/auth/verified-request.guard.js');
 
 const state = 'A'.repeat(43);
 const stateCookie = `lingualoop-oauth-state=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=300`;
@@ -15,6 +19,10 @@ const clearCookie = 'lingualoop-oauth-state=; Path=/; HttpOnly; SameSite=Lax; Ma
 const refreshCookie = 'lingualoop-refresh=refresh-test; Path=/; HttpOnly; SameSite=Lax; Max-Age=600';
 const refreshCredentialCookie = 'lingualoop-refresh=refresh-test';
 const webOrigin = 'http://localhost:5001';
+const ownerId = '550e8400-e29b-41d4-a716-446655440000';
+const sessionId = '123e4567-e89b-42d3-a456-426614174000';
+const accessToken = 'valid-access-token';
+const refreshForSession = `${sessionId}.${'A'.repeat(43)}`;
 
 async function server(t, overrides = {}) {
   let consumed = false;
@@ -33,7 +41,12 @@ async function server(t, overrides = {}) {
   };
   const refreshCalls = [];
   const compensationCalls = [];
+  const logoutCalls = [];
   const refreshSession = {
+    async logout(binding) {
+      logoutCalls.push(binding);
+      if (overrides.logoutError) throw new Error('private store failure');
+    },
     async refresh(credential) {
       refreshCalls.push(credential);
       if (overrides.refreshError || credential !== 'refresh-test') throw new Error('generic failure');
@@ -55,12 +68,33 @@ async function server(t, overrides = {}) {
       { provide: GOOGLE_AUTH_RATE_LIMITER, useValue: new GoogleAuthRateLimiter() },
       { provide: REFRESH_SESSION, useValue: refreshSession },
       { provide: GOOGLE_BROWSER_POLICY, useValue: browserPolicy },
+      { provide: LinguaLoopTokenService, useValue: { async verifyBearerToken(token) {
+        if (token !== accessToken) throw new InvalidBearerTokenError();
+        return { issuer: 'google', subject: 'subject', sessionId };
+      } } },
+      { provide: LINGUALOOP_IDENTITY_STORE, useValue: { async findOwnerByIdentity() { return overrides.resolvedOwner ?? ownerId; } } },
+      { provide: LINGUALOOP_SESSION_STORE, useValue: { async isSessionActive(owner, session) { return !overrides.inactiveSession && owner === ownerId && session === sessionId; } } },
+      { provide: ConfiguredVerifiedRequestGuard, useClass: ConfiguredVerifiedRequestGuard },
     ],
   }, { logger: false });
   await app.listen(0, '127.0.0.1');
   t.after(() => app.close());
   const address = app.getHttpServer().address();
-  return { base: `http://127.0.0.1:${address.port}`, calls, refreshCalls, compensationCalls };
+  return { base: `http://127.0.0.1:${address.port}`, calls, refreshCalls, compensationCalls, logoutCalls };
+}
+
+function duplicateAuthorizationRequest(base) {
+  return new Promise((resolve, reject) => {
+    const request = http.request(`${base}/auth/logout`, {
+      method: 'POST',
+      headers: { origin: webOrigin, cookie: refreshCredentialCookie, authorization: [`Bearer ${accessToken}`, `Bearer ${accessToken}`] },
+    }, (response) => {
+      response.resume();
+      response.on('end', () => resolve(response.statusCode));
+    });
+    request.on('error', reject);
+    request.end();
+  });
 }
 
 function assertSafeHeaders(response) {
@@ -202,6 +236,7 @@ test('fully valid Google settings continue to register auth routes and providers
     assert.ok(appControllers.includes(GoogleAuthController));
     assert.ok(appProviders.some((provider) => provider && provider.provide === GOOGLE_AUTH_FLOW));
     assert.ok(appProviders.some((provider) => provider && provider.provide === REFRESH_SESSION));
+  assert.ok(appProviders.some((provider) => provider && provider.provide === ConfiguredVerifiedRequestGuard));
     assert.ok(appProviders.some((provider) => provider && provider.provide === GOOGLE_BROWSER_POLICY));
   } finally {
     for (const [name, value] of previous) {
@@ -250,6 +285,98 @@ test('callback redirects to configured web origin, sets only cookies, and never 
   assert.match(cookies[0], /Max-Age=0/);
   assert.match(cookies[1], /^lingualoop-refresh=/);
   assert.doesNotMatch(response.headers.get('location'), /token|code|state=/i);
+});
+
+test('logout revokes the verified owner/session, clears the cookie, and accepts an absent refresh cookie', async (t) => {
+  const { base, logoutCalls } = await server(t);
+  const response = await fetch(`${base}/auth/logout`, {
+    method: 'POST', headers: { origin: webOrigin, authorization: `Bearer ${accessToken}`, cookie: `lingualoop-refresh=${refreshForSession}` },
+  });
+  assert.equal(response.status, 204);
+  assert.match(response.headers.get('set-cookie'), /Max-Age=0/);
+  assert.deepEqual(logoutCalls, [{ ownerId, sessionId }]);
+  assertSafeHeaders(response);
+
+  const absent = await fetch(`${base}/auth/logout`, {
+    method: 'POST', headers: { origin: webOrigin, authorization: `Bearer ${accessToken}` },
+  });
+  assert.equal(absent.status, 204);
+  assert.match(absent.headers.get('set-cookie'), /Max-Age=0/);
+  assert.deepEqual(logoutCalls, [{ ownerId, sessionId }, { ownerId, sessionId }]);
+});
+
+test('logout rejects wrong or missing Origin without clearing cookies or revoking', async (t) => {
+  const { base, logoutCalls } = await server(t);
+  for (const origin of [undefined, 'null', 'http://localhost:5000', 'http://127.0.0.1:5001']) {
+    const headers = { authorization: `Bearer ${accessToken}`, cookie: `lingualoop-refresh=${refreshForSession}` };
+    if (origin !== undefined) headers.origin = origin;
+    const response = await fetch(`${base}/auth/logout`, { method: 'POST', headers });
+    assert.equal(response.status, 403);
+    assert.equal(response.headers.get('set-cookie'), null);
+    assert.equal(await response.text(), 'Google login could not be completed.');
+  }
+  assert.deepEqual(logoutCalls, []);
+});
+
+test('logout requires one valid bearer and active owner-scoped session before handler mutation', async (t) => {
+  const { base, logoutCalls } = await server(t);
+  for (const authorization of [undefined, 'Bearer expired-token']) {
+    const headers = { origin: webOrigin, cookie: `lingualoop-refresh=${refreshForSession}` };
+    if (authorization !== undefined) headers.authorization = authorization;
+    assert.equal((await fetch(`${base}/auth/logout`, { method: 'POST', headers })).status, 401);
+  }
+  assert.equal(await duplicateAuthorizationRequest(base), 401);
+  const mismatch = await server(t, { resolvedOwner: '6ba7b810-9dad-41d1-80b4-00c04fd430c8' });
+  const denied = await fetch(`${mismatch.base}/auth/logout`, {
+    method: 'POST', headers: { origin: webOrigin, authorization: `Bearer ${accessToken}` },
+  });
+  assert.equal(denied.status, 401);
+  assert.deepEqual(logoutCalls, []);
+});
+
+test('logout rejects malformed, duplicate, and session-mismatched cookies without revoking', async (t) => {
+  const { base, logoutCalls } = await server(t);
+  for (const cookie of [
+    'lingualoop-refresh=malformed',
+    `lingualoop-refresh=${refreshForSession}; lingualoop-refresh=${refreshForSession}`,
+    `lingualoop-refresh=223e4567-e89b-42d3-a456-426614174000.${'A'.repeat(43)}`,
+  ]) {
+    const response = await fetch(`${base}/auth/logout`, {
+      method: 'POST', headers: { origin: webOrigin, authorization: `Bearer ${accessToken}`, cookie },
+    });
+    assert.equal(response.status, 401);
+    assert.match(response.headers.get('set-cookie'), /Max-Age=0/);
+    assert.equal(await response.text(), 'Google login could not be completed.');
+    assertSafeHeaders(response);
+  }
+  assert.deepEqual(logoutCalls, []);
+});
+
+test('logout store failures are generic and clear only on allowed Origin', async (t) => {
+  const { base } = await server(t, { logoutError: true });
+  const response = await fetch(`${base}/auth/logout`, {
+    method: 'POST', headers: { origin: webOrigin, authorization: `Bearer ${accessToken}` },
+  });
+  assert.equal(response.status, 401);
+  assert.match(response.headers.get('set-cookie'), /Max-Age=0/);
+  assert.equal(await response.text(), 'Google login could not be completed.');
+  assertSafeHeaders(response);
+});
+
+test('logout is rate-limited by socket peer and clears only allowed-origin cookie', async (t) => {
+  const { base } = await server(t);
+  for (let i = 0; i < 30; i += 1) {
+    const response = await fetch(`${base}/auth/logout`, {
+      method: 'POST', headers: { origin: webOrigin, authorization: `Bearer ${accessToken}` },
+    });
+    assert.equal(response.status, 204);
+  }
+  const limited = await fetch(`${base}/auth/logout`, {
+    method: 'POST', headers: { origin: webOrigin, authorization: `Bearer ${accessToken}` },
+  });
+  assert.equal(limited.status, 429);
+  assert.match(limited.headers.get('set-cookie'), /Max-Age=0/);
+  assertSafeHeaders(limited);
 });
 
 test('refresh rotates once, returns only a no-store JSON access token and preserves absolute cookie expiry', async (t) => {

@@ -1,4 +1,4 @@
-import type { Provider } from '@nestjs/common';
+import { Inject, Injectable, type Provider } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { OAuthStateService } from './oauth-state.service';
 import { GoogleAuthFlow } from './google-auth-flow';
@@ -8,6 +8,7 @@ import { loadGoogleOAuthConfig } from './google-oauth.config';
 import { GoogleLoginSession } from './google-login-session';
 import { LinguaLoopTokenService, LINGUALOOP_TOKEN_SIGNING_KEY } from './lingualoop-token.service';
 import { loadTokenSigningKey } from './token-signing-key.config';
+import { VerifiedRequestGuard } from './verified-request.guard';
 import { RefreshSession } from './refresh-session';
 import { createGoogleBrowserPolicy, GOOGLE_BROWSER_POLICY } from './google-browser-policy';
 import {
@@ -19,6 +20,17 @@ import {
 
 export const GOOGLE_AUTH_FLOW = Symbol('GOOGLE_AUTH_FLOW');
 export const REFRESH_SESSION = Symbol('REFRESH_SESSION');
+
+@Injectable()
+export class ConfiguredVerifiedRequestGuard extends VerifiedRequestGuard {
+  constructor(
+    @Inject(LinguaLoopTokenService) verifier: LinguaLoopTokenService,
+    @Inject(LINGUALOOP_IDENTITY_STORE) owners: { findOwnerByIdentity(identity: { issuer: string; subject: string }): Promise<string | null> },
+    @Inject(LINGUALOOP_SESSION_STORE) sessions: { isSessionActive(ownerId: string, sessionId: string, nowMs: number): Promise<boolean> },
+  ) {
+    super(verifier, owners, sessions);
+  }
+}
 
 export function isGoogleAuthConfigurationValid(env: NodeJS.ProcessEnv = process.env): boolean {
   try {
@@ -92,6 +104,7 @@ export const GOOGLE_AUTH_PROVIDERS: Provider[] = [
       webOrigin: requiredSetting('LINGUALOOP_WEB_ORIGIN', process.env.LINGUALOOP_WEB_ORIGIN),
     }),
   },
+  { provide: ConfiguredVerifiedRequestGuard, useClass: ConfiguredVerifiedRequestGuard },
   {
     provide: REFRESH_SESSION,
     inject: [LINGUALOOP_REFRESH_STORE, LINGUALOOP_SESSION_STORE, LinguaLoopTokenService],

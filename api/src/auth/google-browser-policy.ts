@@ -75,7 +75,17 @@ export function createGoogleBrowserPolicy(options: GoogleBrowserPolicyOptions) {
 
     readRefreshCredential(cookieHeader: unknown): string {
       try {
-        return readSingleCookie(cookieHeader, refreshName);
+        const credential = readOptionalCookie(cookieHeader, refreshName);
+        if (credential === undefined) throw new Error();
+        return credential;
+      } catch {
+        throw new GoogleBrowserPolicyError();
+      }
+    },
+
+    readOptionalRefreshCredential(cookieHeader: unknown): string | undefined {
+      try {
+        return readOptionalCookie(cookieHeader, refreshName);
       } catch {
         throw new GoogleBrowserPolicyError();
       }
@@ -115,6 +125,13 @@ function isValidState(value: unknown): value is string {
 }
 
 function readSingleCookie(header: unknown, expectedName: string): string {
+  const value = readOptionalCookie(header, expectedName);
+  if (value === undefined) throw new Error();
+  return value;
+}
+
+function readOptionalCookie(header: unknown, expectedName: string): string | undefined {
+  if (header === undefined) return undefined;
   if (typeof header !== 'string' || header.length === 0) throw new Error();
   let found: string | undefined;
   for (const part of header.split(';')) {
@@ -129,6 +146,5 @@ function readSingleCookie(header: unknown, expectedName: string): string {
       found = value;
     }
   }
-  if (found === undefined) throw new Error();
   return found;
 }

@@ -1,21 +1,26 @@
-import { Controller, Get, Inject, Post, Req, Res } from '@nestjs/common';
+import { Controller, Get, Inject, Post, Req, Res, UseGuards } from '@nestjs/common';
 import type { GoogleAuthFlow } from './google-auth-flow';
-import { GOOGLE_AUTH_FLOW, REFRESH_SESSION } from './google-auth.providers';
+import { ConfiguredVerifiedRequestGuard, GOOGLE_AUTH_FLOW, REFRESH_SESSION } from './google-auth.providers';
 import type { RefreshSession } from './refresh-session';
+import { parseRefreshCredential } from './refresh-credential';
+import type { AuthenticatedIdentity } from './verified-request.guard';
 import { createGoogleBrowserPolicy, GOOGLE_BROWSER_POLICY } from './google-browser-policy';
 
 const WINDOW_MS = 60_000;
 const MAX_STARTS = 10;
 const MAX_CALLBACKS = 30;
 const MAX_REFRESHES = 30;
+const MAX_LOGOUTS = 30;
 const MAX_CLIENTS = 10_000;
 const GENERIC_FAILURE = 'Google login could not be completed.';
 
 type GoogleHttpRequest = {
   ip?: string;
   socket?: { remoteAddress?: string };
-  headers: { cookie?: string; origin?: string };
+  headers: { cookie?: string; origin?: string; authorization?: string | string[] };
   query: { state?: unknown; code?: unknown; error?: unknown };
+  rawHeaders?: string[];
+  verifiedIdentity?: AuthenticatedIdentity;
 };
 type GoogleHttpResponse = {
   setHeader(name: string, value: string | string[]): void;
@@ -26,18 +31,18 @@ type GoogleHttpResponse = {
 
 /** Small per-process limiter with bounded state; Express's untrusted forwarded headers are ignored. */
 export class GoogleAuthRateLimiter {
-  private readonly buckets = new Map<string, { window: number; starts: number; callbacks: number; refreshes: number }>();
+  private readonly buckets = new Map<string, { window: number; starts: number; callbacks: number; refreshes: number; logouts: number }>();
 
-  allow(address: string, kind: 'start' | 'callback' | 'refresh', now = Date.now()): boolean {
+  allow(address: string, kind: 'start' | 'callback' | 'refresh' | 'logout', now = Date.now()): boolean {
     const key = typeof address === 'string' && address.length <= 128 ? address : 'unknown';
     let bucket = this.buckets.get(key);
     const window = Math.floor(now / WINDOW_MS);
-    if (!bucket || bucket.window !== window) bucket = { window, starts: 0, callbacks: 0, refreshes: 0 };
-    const count = kind === 'start' ? ++bucket.starts : kind === 'callback' ? ++bucket.callbacks : ++bucket.refreshes;
+    if (!bucket || bucket.window !== window) bucket = { window, starts: 0, callbacks: 0, refreshes: 0, logouts: 0 };
+    const count = kind === 'start' ? ++bucket.starts : kind === 'callback' ? ++bucket.callbacks : kind === 'refresh' ? ++bucket.refreshes : ++bucket.logouts;
     this.buckets.delete(key);
     this.buckets.set(key, bucket);
     if (this.buckets.size > MAX_CLIENTS) this.buckets.delete(this.buckets.keys().next().value!);
-    return count <= (kind === 'start' ? MAX_STARTS : kind === 'callback' ? MAX_CALLBACKS : MAX_REFRESHES);
+    return count <= (kind === 'start' ? MAX_STARTS : kind === 'callback' ? MAX_CALLBACKS : kind === 'refresh' ? MAX_REFRESHES : MAX_LOGOUTS);
   }
 }
 
@@ -48,7 +53,7 @@ export class GoogleAuthController {
   constructor(
     @Inject(GOOGLE_AUTH_FLOW) private readonly flow: Pick<GoogleAuthFlow, 'begin' | 'finish' | 'clearStateCookie'>,
     @Inject(GOOGLE_AUTH_RATE_LIMITER) private readonly limiter: GoogleAuthRateLimiter,
-    @Inject(REFRESH_SESSION) private readonly refreshSession: Pick<RefreshSession, 'refresh'>,
+    @Inject(REFRESH_SESSION) private readonly refreshSession: Pick<RefreshSession, 'refresh' | 'logout'>,
     @Inject(GOOGLE_BROWSER_POLICY) private readonly browserPolicy: ReturnType<typeof createGoogleBrowserPolicy>,
   ) {}
 
@@ -90,6 +95,35 @@ export class GoogleAuthController {
     } catch {
       response.setHeader('Set-Cookie', this.flow.clearStateCookie());
       response.status(400).send(GENERIC_FAILURE);
+    }
+  }
+
+  @Post('auth/logout')
+  @UseGuards(ConfiguredVerifiedRequestGuard)
+  async logout(@Req() request: GoogleHttpRequest, @Res() response: GoogleHttpResponse): Promise<void> {
+    this.setSafeHeaders(response);
+    if (!this.browserPolicy.isAllowedRefreshOrLogoutOrigin(request.headers.origin)) {
+      response.status(403).send(GENERIC_FAILURE);
+      return;
+    }
+    response.setHeader('Set-Cookie', this.browserPolicy.clearRefreshCookie());
+    if (!this.limiter.allow(request.socket?.remoteAddress ?? '', 'logout')) {
+      response.status(429).send(GENERIC_FAILURE);
+      return;
+    }
+
+    try {
+      const identity = request.verifiedIdentity;
+      if (!identity) throw new Error();
+      const credential = this.browserPolicy.readOptionalRefreshCredential(request.headers.cookie);
+      if (credential !== undefined) {
+        const parsed = parseRefreshCredential(credential);
+        if (parsed.sessionUuid.toLowerCase() !== identity.sessionId.toLowerCase()) throw new Error();
+      }
+      await this.refreshSession.logout({ ownerId: identity.ownerId, sessionId: identity.sessionId });
+      response.status(204).send('');
+    } catch {
+      response.status(401).send(GENERIC_FAILURE);
     }
   }
 
