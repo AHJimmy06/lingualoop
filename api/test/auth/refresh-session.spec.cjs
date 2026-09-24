@@ -51,9 +51,16 @@ function genericFailure(promise, ...privateDetails) {
 
 test('valid rotation returns access/new refresh credentials and the unchanged DB absolute expiry', async () => {
   const { service, calls } = fixture();
-  assert.deepEqual(await service.refresh(CREDENTIAL), {
-    accessToken: ACCESS, refreshCredential: NEXT, expiresAtMs: EXPIRY,
-  });
+  const result = await service.refresh(CREDENTIAL);
+  assert.deepEqual({
+    accessToken: result.accessToken,
+    refreshCredential: result.refreshCredential,
+    expiresAtMs: result.expiresAtMs,
+  }, { accessToken: ACCESS, refreshCredential: NEXT, expiresAtMs: EXPIRY });
+  assert.equal(typeof result.compensateDeliveryFailure, 'function');
+  await result.compensateDeliveryFailure();
+  await result.compensateDeliveryFailure();
+  assert.deepEqual(calls.revoke, [[OWNER, SESSION, NOW]]);
   assert.deepEqual(calls.rotate, [[SESSION, HASH, NEXT_HASH, NOW]]);
   assert.deepEqual(calls.issue, [{ issuer: 'google', subject: 'verified-subject', sessionId: SESSION }]);
   assert.equal(JSON.stringify(calls.rotate).includes(CREDENTIAL), false);
@@ -75,6 +82,17 @@ test('refresh store failures do not reveal database details', async () => {
   const secret = 'private SQL host detail';
   const { service } = fixture({ refreshStore: { async rotate() { throw new Error(secret); } } });
   await genericFailure(service.refresh(CREDENTIAL), secret);
+});
+
+test('delivery compensation is owner-scoped, idempotent, and best-effort', async () => {
+  const detail = 'revoke backend detail';
+  const { service, calls } = fixture({
+    sessionStore: { async revokeSession(...args) { calls.revoke.push(args); throw new Error(detail); } },
+  });
+  const result = await service.refresh(CREDENTIAL);
+  await result.compensateDeliveryFailure();
+  await result.compensateDeliveryFailure();
+  assert.deepEqual(calls.revoke, [[OWNER, SESSION, NOW]]);
 });
 
 test('token issuance failure revokes the rotated session by DB-verified owner and returns no credential', async () => {

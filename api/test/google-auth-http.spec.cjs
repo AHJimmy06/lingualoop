@@ -5,13 +5,16 @@ const { Module } = require('@nestjs/common');
 const { HealthController } = require('../dist/health.controller.js');
 const { LINGUALOOP_QUERY_EXECUTOR } = require('../dist/db/postgres.js');
 const { GoogleAuthController, GOOGLE_AUTH_RATE_LIMITER, GoogleAuthRateLimiter } = require('../dist/auth/google-auth.controller.js');
-const { GOOGLE_AUTH_FLOW } = require('../dist/auth/google-auth.providers.js');
+const { GOOGLE_AUTH_FLOW, REFRESH_SESSION } = require('../dist/auth/google-auth.providers.js');
+const { GOOGLE_BROWSER_POLICY, createGoogleBrowserPolicy } = require('../dist/auth/google-browser-policy.js');
 const { GoogleCodeExchange } = require('../dist/auth/google-code-exchange.js');
 
 const state = 'A'.repeat(43);
 const stateCookie = `lingualoop-oauth-state=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=300`;
 const clearCookie = 'lingualoop-oauth-state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0';
 const refreshCookie = 'lingualoop-refresh=refresh-test; Path=/; HttpOnly; SameSite=Lax; Max-Age=600';
+const refreshCredentialCookie = 'lingualoop-refresh=refresh-test';
+const webOrigin = 'http://localhost:5001';
 
 async function server(t, overrides = {}) {
   let consumed = false;
@@ -28,6 +31,21 @@ async function server(t, overrides = {}) {
     },
     ...overrides,
   };
+  const refreshCalls = [];
+  const compensationCalls = [];
+  const refreshSession = {
+    async refresh(credential) {
+      refreshCalls.push(credential);
+      if (overrides.refreshError || credential !== 'refresh-test') throw new Error('generic failure');
+      return {
+        accessToken: 'access-token-test',
+        refreshCredential: 'rotated-test',
+        expiresAtMs: Date.now() + 6 * 24 * 60 * 60 * 1000,
+        async compensateDeliveryFailure() { compensationCalls.push(['verified-owner', 'verified-session']); },
+      };
+    },
+  };
+  const browserPolicy = overrides.browserPolicy ?? createGoogleBrowserPolicy({ callbackUrl: 'http://localhost:5000/auth/google/callback', webOrigin });
   class TestModule {}
   const app = await NestFactory.create({
     module: TestModule,
@@ -35,12 +53,14 @@ async function server(t, overrides = {}) {
     providers: [
       { provide: GOOGLE_AUTH_FLOW, useValue: flow },
       { provide: GOOGLE_AUTH_RATE_LIMITER, useValue: new GoogleAuthRateLimiter() },
+      { provide: REFRESH_SESSION, useValue: refreshSession },
+      { provide: GOOGLE_BROWSER_POLICY, useValue: browserPolicy },
     ],
   }, { logger: false });
   await app.listen(0, '127.0.0.1');
   t.after(() => app.close());
   const address = app.getHttpServer().address();
-  return { base: `http://127.0.0.1:${address.port}`, calls };
+  return { base: `http://127.0.0.1:${address.port}`, calls, refreshCalls, compensationCalls };
 }
 
 function assertSafeHeaders(response) {
@@ -87,6 +107,7 @@ test('missing Google settings leave Nest health routes live and do not mount aut
   assert.equal((await fetch(`${base}/ready`)).status, 200);
   assert.equal((await fetch(`${base}/auth/google`, { redirect: 'manual' })).status, 404);
   assert.equal((await fetch(`${base}/auth/google/callback?code=partial`)).status, 404);
+  assert.equal((await fetch(`${base}/auth/refresh`, { method: 'POST', headers: { origin: webOrigin } })).status, 404);
 });
 
 test('malformed present Google settings keep health routes live and disable auth routes', async (t) => {
@@ -151,6 +172,7 @@ test('malformed present Google settings keep health routes live and disable auth
   assert.equal((await fetch(`${base}/ready`)).status, 200);
   assert.equal((await fetch(`${base}/auth/google`, { redirect: 'manual' })).status, 404);
   assert.equal((await fetch(`${base}/auth/google/callback?code=partial`)).status, 404);
+  assert.equal((await fetch(`${base}/auth/refresh`, { method: 'POST', headers: { origin: webOrigin } })).status, 404);
 });
 
 test('fully valid Google settings continue to register auth routes and providers', () => {
@@ -179,6 +201,8 @@ test('fully valid Google settings continue to register auth routes and providers
     const appProviders = Reflect.getMetadata('providers', AppModule);
     assert.ok(appControllers.includes(GoogleAuthController));
     assert.ok(appProviders.some((provider) => provider && provider.provide === GOOGLE_AUTH_FLOW));
+    assert.ok(appProviders.some((provider) => provider && provider.provide === REFRESH_SESSION));
+    assert.ok(appProviders.some((provider) => provider && provider.provide === GOOGLE_BROWSER_POLICY));
   } finally {
     for (const [name, value] of previous) {
       if (value === undefined) delete process.env[name];
@@ -226,6 +250,78 @@ test('callback redirects to configured web origin, sets only cookies, and never 
   assert.match(cookies[0], /Max-Age=0/);
   assert.match(cookies[1], /^lingualoop-refresh=/);
   assert.doesNotMatch(response.headers.get('location'), /token|code|state=/i);
+});
+
+test('refresh rotates once, returns only a no-store JSON access token and preserves absolute cookie expiry', async (t) => {
+  const { base, refreshCalls, compensationCalls } = await server(t);
+  const response = await fetch(`${base}/auth/refresh`, { method: 'POST', headers: { origin: webOrigin, cookie: refreshCredentialCookie } });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { accessToken: 'access-token-test' });
+  assert.deepEqual(refreshCalls, ['refresh-test']);
+  assert.deepEqual(compensationCalls, []);
+  const maxAge = Number(response.headers.get('set-cookie').match(/Max-Age=(\d+)/)[1]);
+  assert.ok(maxAge > 500_000 && maxAge <= 518_400);
+  assertSafeHeaders(response);
+  assert.equal(response.headers.get('content-type'), 'application/json; charset=utf-8');
+  assert.doesNotMatch(response.url, /access-token|refresh-test|rotated-test/);
+  assert.doesNotMatch(response.headers.get('location') || '', /token/i);
+});
+
+test('refresh cookie assembly failure compensates once and delivers only the generic error', async (t) => {
+  const policy = createGoogleBrowserPolicy({ callbackUrl: 'http://localhost:5000/auth/google/callback', webOrigin });
+  const { base, compensationCalls } = await server(t, {
+    browserPolicy: { ...policy, refreshCookie() { throw new Error('cookie assembly detail'); } },
+  });
+  const response = await fetch(`${base}/auth/refresh`, { method: 'POST', headers: { origin: webOrigin, cookie: refreshCredentialCookie } });
+  assert.equal(response.status, 401);
+  assert.equal(response.headers.get('set-cookie'), 'lingualoop-refresh=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
+  assert.equal(await response.text(), 'Google login could not be completed.');
+  assert.deepEqual(compensationCalls, [['verified-owner', 'verified-session']]);
+  assert.doesNotMatch(response.headers.get('set-cookie'), /rotated-test/);
+  assertSafeHeaders(response);
+});
+
+test('refresh rejects missing, null, wrong-origin/scheme/port before cookie or core access and does not clear', async (t) => {
+  const { base, refreshCalls } = await server(t);
+  for (const origin of [undefined, 'null', 'https://localhost:5001', 'http://localhost:5000', 'http://127.0.0.1:5001']) {
+    const headers = { cookie: refreshCredentialCookie };
+    if (origin !== undefined) headers.origin = origin;
+    const response = await fetch(`${base}/auth/refresh`, { method: 'POST', headers });
+    assert.equal(response.status, 403);
+    assert.equal(response.headers.get('set-cookie'), null);
+    assert.equal(await response.text(), 'Google login could not be completed.');
+    assertSafeHeaders(response);
+  }
+  assert.deepEqual(refreshCalls, []);
+});
+
+test('refresh malformed, missing, duplicate cookies and replay return generic failures and clear cookie', async (t) => {
+  const { base, refreshCalls } = await server(t);
+  for (const cookie of [undefined, 'other=value', 'broken', `${refreshCredentialCookie}; lingualoop-refresh=second`]) {
+    const headers = { origin: webOrigin };
+    if (cookie !== undefined) headers.cookie = cookie;
+    const response = await fetch(`${base}/auth/refresh`, { method: 'POST', headers });
+    assert.equal(response.status, 401);
+    assert.match(response.headers.get('set-cookie'), /Max-Age=0/);
+    assert.equal(await response.text(), 'Google login could not be completed.');
+    assertSafeHeaders(response);
+  }
+  const replay = await fetch(`${base}/auth/refresh`, { method: 'POST', headers: { origin: webOrigin, cookie: 'lingualoop-refresh=spent' } });
+  assert.equal(replay.status, 401);
+  assert.match(replay.headers.get('set-cookie'), /Max-Age=0/);
+  assert.equal(refreshCalls.length, 1);
+});
+
+test('refresh is rate-limited per request IP and clears only allowed-origin browser cookie', async (t) => {
+  const { base } = await server(t);
+  for (let i = 0; i < 30; i += 1) {
+    const response = await fetch(`${base}/auth/refresh`, { method: 'POST', headers: { origin: webOrigin, cookie: refreshCredentialCookie } });
+    assert.equal(response.status, 200);
+  }
+  const limited = await fetch(`${base}/auth/refresh`, { method: 'POST', headers: { origin: webOrigin, cookie: refreshCredentialCookie } });
+  assert.equal(limited.status, 429);
+  assert.match(limited.headers.get('set-cookie'), /Max-Age=0/);
+  assertSafeHeaders(limited);
 });
 
 test('callback errors and replay are generic and always clear state cookie', async (t) => {

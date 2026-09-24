@@ -8,6 +8,8 @@ import { loadGoogleOAuthConfig } from './google-oauth.config';
 import { GoogleLoginSession } from './google-login-session';
 import { LinguaLoopTokenService, LINGUALOOP_TOKEN_SIGNING_KEY } from './lingualoop-token.service';
 import { loadTokenSigningKey } from './token-signing-key.config';
+import { RefreshSession } from './refresh-session';
+import { createGoogleBrowserPolicy, GOOGLE_BROWSER_POLICY } from './google-browser-policy';
 import {
   LINGUALOOP_IDENTITY_STORE,
   LINGUALOOP_OAUTH_STATE_STORE,
@@ -16,6 +18,7 @@ import {
 } from './auth-store.providers';
 
 export const GOOGLE_AUTH_FLOW = Symbol('GOOGLE_AUTH_FLOW');
+export const REFRESH_SESSION = Symbol('REFRESH_SESSION');
 
 export function isGoogleAuthConfigurationValid(env: NodeJS.ProcessEnv = process.env): boolean {
   try {
@@ -36,6 +39,7 @@ export function isGoogleAuthConfigurationValid(env: NodeJS.ProcessEnv = process.
       codeExchange: { async exchange() { return { idToken: '' }; } },
       loginSession: { async issue() { return { accessToken: '', refreshCredential: '', expiresAtMs: 1 }; } },
     });
+    createGoogleBrowserPolicy(config);
     return true;
   } catch {
     return false;
@@ -80,6 +84,18 @@ export const GOOGLE_AUTH_PROVIDERS: Provider[] = [
       refreshStore: refresh,
       tokenService: tokens,
     }),
+  },
+  {
+    provide: GOOGLE_BROWSER_POLICY,
+    useFactory: () => createGoogleBrowserPolicy({
+      callbackUrl: requiredSetting('GOOGLE_CALLBACK_URL', process.env.GOOGLE_CALLBACK_URL),
+      webOrigin: requiredSetting('LINGUALOOP_WEB_ORIGIN', process.env.LINGUALOOP_WEB_ORIGIN),
+    }),
+  },
+  {
+    provide: REFRESH_SESSION,
+    inject: [LINGUALOOP_REFRESH_STORE, LINGUALOOP_SESSION_STORE, LinguaLoopTokenService],
+    useFactory: (refresh: ConstructorParameters<typeof RefreshSession>[0]['refreshStore'], sessions: ConstructorParameters<typeof RefreshSession>[0]['sessionStore'], tokens: ConstructorParameters<typeof RefreshSession>[0]['tokenService']) => new RefreshSession({ refreshStore: refresh, sessionStore: sessions, tokenService: tokens }),
   },
   {
     provide: GOOGLE_AUTH_FLOW,

@@ -7,6 +7,7 @@ const REFRESH_TTL_MILLISECONDS = REFRESH_TTL_SECONDS * 1000;
 const MAX_DATE_MILLISECONDS = 8.64e15;
 const STATE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const COOKIE_VALUE_PATTERN = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/;
+export const GOOGLE_BROWSER_POLICY = Symbol('GOOGLE_BROWSER_POLICY');
 const GENERIC_FAILURE = 'Google login could not be completed.';
 
 export class GoogleBrowserPolicyError extends Error {
@@ -70,6 +71,14 @@ export function createGoogleBrowserPolicy(options: GoogleBrowserPolicyOptions) {
 
     clearRefreshCookie(): string {
       return `${refreshName}=; ${cookieAttributes}; Max-Age=0`;
+    },
+
+    readRefreshCredential(cookieHeader: unknown): string {
+      try {
+        return readSingleCookie(cookieHeader, refreshName);
+      } catch {
+        throw new GoogleBrowserPolicyError();
+      }
     },
 
     async consumeCallbackState(cookieHeader: unknown, callbackState: unknown): Promise<void> {

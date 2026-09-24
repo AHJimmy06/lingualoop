@@ -17,6 +17,8 @@ export interface RefreshSessionResult {
   accessToken: string;
   refreshCredential: string;
   expiresAtMs: number;
+  /** Best-effort revoke using only the owner returned by the successful atomic rotation. */
+  compensateDeliveryFailure(): Promise<void>;
 }
 
 /** Owner/session binding must come from a verified access token, never from refresh-credential claims. */
@@ -66,11 +68,22 @@ export class RefreshSession {
           sessionId: parsed.sessionUuid,
         });
         if (typeof accessToken !== 'string' || accessToken.length === 0) throw new Error(SESSION_ERROR_MESSAGE);
+        let compensation: Promise<void> | undefined;
         return {
           accessToken,
           refreshCredential: next.credential,
           // Keep the database's original absolute expiry; never calculate a new sliding expiry.
           expiresAtMs: rotated.expiresAtMs,
+          compensateDeliveryFailure: () => {
+            compensation ??= (async () => {
+              try {
+                await this.dependencies.sessionStore.revokeSession(rotated.ownerId, parsed.sessionUuid, this.now());
+              } catch {
+                // Delivery compensation is best-effort and must not expose owner/store details.
+              }
+            })();
+            return compensation;
+          },
         };
       } catch {
         // The new hash is already current. Revoking the bound session makes that rotated credential unusable.
