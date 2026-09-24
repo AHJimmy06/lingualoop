@@ -2,6 +2,9 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -47,7 +50,51 @@ class FastConformerWorkerTests(unittest.TestCase):
         return status, messages, error.getvalue(), model
 
     def test_import_does_not_load_nemo(self):
-        self.assertNotIn("nemo", __import__("sys").modules)
+        self.assertNotIn("nemo", sys.modules)
+
+    def test_production_subprocess_suppresses_fd1_noise_during_load_and_transcribe(self):
+        harness = r'''import importlib.util, io, os, sys
+spec = importlib.util.spec_from_file_location("worker", sys.argv[1])
+worker = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(worker)
+class Model:
+    def transcribe(self, paths):
+        print("synthetic transcribe print noise")
+        os.write(1, b"synthetic transcribe native noise\n")
+        return ["synthetic transcript"]
+def load_model(path):
+    print("synthetic restore print noise")
+    os.write(1, b"synthetic restore native noise\n")
+    return Model()
+requests = io.BytesIO(b'{"id":"fixture-request","audioPath":"fixture.wav"}\n')
+raise SystemExit(worker.main(
+    ["--model-path", sys.argv[2], "--model-sha256", sys.argv[3]],
+    stdin=requests,
+    stderr=sys.stderr,
+    model_loader=load_model,
+))
+'''
+        completed = subprocess.run(
+            [sys.executable, "-c", harness, str(WORKER_PATH), str(self.model_path), self.model_sha256],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.splitlines(), [
+            json.dumps({
+                "type": "ready",
+                "modelId": worker.MODEL_ID,
+                "modelSha256": self.model_sha256,
+            }, separators=(",", ":")),
+            json.dumps({
+                "type": "result",
+                "id": "fixture-request",
+                "transcript": "synthetic transcript",
+            }, separators=(",", ":")),
+        ])
 
     def test_ready_and_success_preserve_protocol_and_matching_id(self):
         request = b'{"id":"request-1","audioPath":"/private/audio.wav"}\n'
