@@ -16,6 +16,15 @@ test('requires validated explicit URLs on the same hostname and scheme', () => {
   assert.throws(() => policy({ callbackUrl: 'https://other.example.test/auth/google/callback' }), /same hostname/);
   assert.throws(() => createGoogleBrowserPolicy({ callbackUrl: 'http://localhost:5000/auth/google/callback', webOrigin: 'https://localhost:5001' }), /same scheme/);
   assert.throws(() => policy({ callbackUrl: 'http://public.example.test/auth/google/callback', webOrigin: 'http://public.example.test' }), TypeError);
+  const localhost = createGoogleBrowserPolicy({
+    callbackUrl: 'http://localhost:5000/auth/google/callback',
+    webOrigin: 'http://localhost:5001',
+  });
+  assert.equal(localhost.isAllowedRefreshOrLogoutOrigin('http://localhost:5001'), true);
+  assert.throws(() => createGoogleBrowserPolicy({
+    callbackUrl: 'http://localhost:5000/auth/google/callback',
+    webOrigin: 'http://127.0.0.1:5001',
+  }), /same hostname/);
   assert.doesNotThrow(() => createGoogleBrowserPolicy({
     callbackUrl: 'http://127.0.0.1:5000/auth/google/callback',
     webOrigin: 'http://127.0.0.1:5001',

@@ -20,18 +20,31 @@ test('accepts explicit canonical HTTPS callback and one web origin', () => {
   });
 });
 
-test('accepts HTTP only for explicit loopback development URLs', () => {
+test('accepts the exact localhost development callback and web origin', () => {
   assert.deepEqual(config({
     GOOGLE_CALLBACK_URL: `http://localhost:5000${GOOGLE_CALLBACK_PATH}`,
-    LINGUALOOP_WEB_ORIGIN: 'http://127.0.0.1:5001',
+    LINGUALOOP_WEB_ORIGIN: 'http://localhost:5001',
   }), {
     callbackUrl: `http://localhost:5000${GOOGLE_CALLBACK_PATH}`,
+    webOrigin: 'http://localhost:5001',
+  });
+});
+
+test('preserves explicit generic loopback URL support', () => {
+  assert.deepEqual(config({
+    GOOGLE_CALLBACK_URL: `http://127.0.0.1:5000${GOOGLE_CALLBACK_PATH}`,
+    LINGUALOOP_WEB_ORIGIN: 'http://127.0.0.1:5001',
+  }), {
+    callbackUrl: `http://127.0.0.1:5000${GOOGLE_CALLBACK_PATH}`,
     webOrigin: 'http://127.0.0.1:5001',
   });
-  assert.equal(config({
+  assert.deepEqual(config({
     GOOGLE_CALLBACK_URL: `http://[::1]:5000${GOOGLE_CALLBACK_PATH}`,
-    LINGUALOOP_WEB_ORIGIN: 'http://localhost:5001',
-  }).webOrigin, 'http://localhost:5001');
+    LINGUALOOP_WEB_ORIGIN: 'http://[::1]:5001',
+  }), {
+    callbackUrl: `http://[::1]:5000${GOOGLE_CALLBACK_PATH}`,
+    webOrigin: 'http://[::1]:5001',
+  });
 });
 
 test('requires both explicit settings and does not synthesize deployment URLs', () => {

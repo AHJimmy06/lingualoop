@@ -24,7 +24,7 @@ async function server(t, overrides = {}) {
       if (consumed) throw new Error('replay');
       if (input.cookieHeader !== `lingualoop-oauth-state=${state}` || input.state !== state || input.code !== 'code') throw new Error('invalid');
       consumed = true;
-      return { redirectUrl: 'http://127.0.0.1:5001', refreshCookie, stateCookie: clearCookie };
+      return { redirectUrl: 'http://localhost:5001', refreshCookie, stateCookie: clearCookie };
     },
     ...overrides,
   };
@@ -95,8 +95,8 @@ test('malformed present Google settings keep health routes live and disable auth
     'GOOGLE_CLIENT_SECRET', 'LINGUALOOP_GOOGLE_AUDIENCE', 'LINGUALOOP_TOKEN_SIGNING_KEY',
   ];
   const valid = {
-    GOOGLE_CALLBACK_URL: 'http://127.0.0.1:5000/auth/google/callback',
-    LINGUALOOP_WEB_ORIGIN: 'http://127.0.0.1:5001',
+    GOOGLE_CALLBACK_URL: 'http://localhost:5000/auth/google/callback',
+    LINGUALOOP_WEB_ORIGIN: 'http://localhost:5001',
     GOOGLE_CLIENT_ID: 'client-id.apps.googleusercontent.com',
     GOOGLE_CLIENT_SECRET: 'client-secret',
     LINGUALOOP_GOOGLE_AUDIENCE: 'client-id.apps.googleusercontent.com',
@@ -104,6 +104,7 @@ test('malformed present Google settings keep health routes live and disable auth
   };
   const malformed = [
     { ...valid, GOOGLE_CALLBACK_URL: 'not a URL' },
+    { ...valid, LINGUALOOP_WEB_ORIGIN: 'http://127.0.0.1:5001' },
     { ...valid, GOOGLE_CLIENT_ID: ' contains whitespace ' },
     { ...valid, GOOGLE_CLIENT_SECRET: '   ' },
     { ...valid, LINGUALOOP_GOOGLE_AUDIENCE: '   ' },
@@ -151,8 +152,8 @@ test('fully valid Google settings continue to register auth routes and providers
     'GOOGLE_CLIENT_SECRET', 'LINGUALOOP_GOOGLE_AUDIENCE', 'LINGUALOOP_TOKEN_SIGNING_KEY',
   ];
   const settings = {
-    GOOGLE_CALLBACK_URL: 'http://127.0.0.1:5000/auth/google/callback',
-    LINGUALOOP_WEB_ORIGIN: 'http://127.0.0.1:5001',
+    GOOGLE_CALLBACK_URL: 'http://localhost:5000/auth/google/callback',
+    LINGUALOOP_WEB_ORIGIN: 'http://localhost:5001',
     GOOGLE_CLIENT_ID: 'client-id.apps.googleusercontent.com',
     GOOGLE_CLIENT_SECRET: 'client-secret',
     LINGUALOOP_GOOGLE_AUDIENCE: 'client-id.apps.googleusercontent.com',
@@ -178,8 +179,8 @@ test('fully valid Google settings continue to register auth routes and providers
 
 test('Google exchange configuration fails closed when explicit client credentials are absent', () => {
   assert.throws(() => new GoogleCodeExchange({ env: {
-    GOOGLE_CALLBACK_URL: 'http://127.0.0.1:5000/auth/google/callback',
-    LINGUALOOP_WEB_ORIGIN: 'http://127.0.0.1:5001',
+    GOOGLE_CALLBACK_URL: 'http://localhost:5000/auth/google/callback',
+    LINGUALOOP_WEB_ORIGIN: 'http://localhost:5001',
   } }), /credentials must be explicitly configured/);
 });
 
@@ -208,7 +209,7 @@ test('callback redirects to configured web origin, sets only cookies, and never 
     headers: { cookie: `lingualoop-oauth-state=${state}` }, redirect: 'manual',
   });
   assert.equal(response.status, 302);
-  assert.equal(response.headers.get('location'), 'http://127.0.0.1:5001');
+  assert.equal(response.headers.get('location'), 'http://localhost:5001');
   assertSafeHeaders(response);
   const cookies = response.headers.getSetCookie();
   assert.equal(cookies.length, 2);
