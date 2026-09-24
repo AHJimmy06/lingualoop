@@ -16,8 +16,19 @@ export interface LinguaLoopPostgresConfig {
 
 export interface LinguaLoopPool {
   query(sql: string, parameters: unknown[]): Promise<{ rows: unknown[] }>;
+  connect?(): Promise<LinguaLoopPoolClient>;
   end(): Promise<void>;
 }
+
+interface LinguaLoopPoolClient {
+  query(sql: string, parameters: unknown[]): Promise<{ rows: unknown[] }>;
+  release(): void;
+}
+
+type TransactionalQueryExecutor = QueryExecutor & {
+  withTransaction<T>(callback: (tx: QueryExecutor) => Promise<T>): Promise<T>;
+  close(): Promise<void>;
+};
 
 export class LinguaLoopDatabaseConfigurationError extends Error {
   constructor() {
@@ -93,7 +104,7 @@ function validateConfig(config: LinguaLoopPostgresConfig): void {
 export function createLinguaLoopQueryExecutor(
   config: LinguaLoopPostgresConfig = loadLinguaLoopPostgresConfig(),
   injectedPool?: LinguaLoopPool,
-): QueryExecutor & { close(): Promise<void> } {
+): TransactionalQueryExecutor {
   validateConfig(config);
   const ownsPool = injectedPool === undefined;
   let pool: LinguaLoopPool;
@@ -133,6 +144,60 @@ export function createLinguaLoopQueryExecutor(
         throw new LinguaLoopDatabaseError();
       }
     },
+    async withTransaction<T>(callback: (tx: QueryExecutor) => Promise<T>): Promise<T> {
+      if (closed || typeof callback !== 'function' || typeof pool.connect !== 'function') {
+        throw new LinguaLoopDatabaseError();
+      }
+
+      let client: LinguaLoopPoolClient;
+      try {
+        client = await pool.connect();
+      } catch {
+        throw new LinguaLoopDatabaseError();
+      }
+
+      let began = false;
+      let transactionFailed = false;
+      try {
+        await client.query('BEGIN', []);
+        began = true;
+        const tx: QueryExecutor = {
+          async query(sql, parameters): Promise<QueryResult> {
+            if (typeof sql !== 'string' || !Array.isArray(parameters)) {
+              transactionFailed = true;
+              throw new LinguaLoopDatabaseError();
+            }
+            try {
+              const result = await client.query(sql, [...parameters]);
+              if (!result || !Array.isArray(result.rows)) throw new Error();
+              return { rows: result.rows };
+            } catch {
+              transactionFailed = true;
+              throw new LinguaLoopDatabaseError();
+            }
+          },
+        };
+        const value = await callback(tx);
+        if (transactionFailed) throw new LinguaLoopDatabaseError();
+        await client.query('COMMIT', []);
+        return value;
+      } catch {
+        if (began) {
+          try {
+            await client.query('ROLLBACK', []);
+          } catch {
+            // Preserve the generic transaction error if rollback also fails.
+          }
+        }
+        throw new LinguaLoopDatabaseError();
+      } finally {
+        try {
+          client.release();
+        } catch {
+          throw new LinguaLoopDatabaseError();
+        }
+      }
+    },
     async close(): Promise<void> {
       if (!ownsPool || closed) return;
       closed = true;
@@ -148,10 +213,14 @@ export function createLinguaLoopQueryExecutor(
 export const LINGUALOOP_QUERY_EXECUTOR = Symbol('LINGUALOOP_QUERY_EXECUTOR');
 
 export class LinguaLoopPostgresProvider implements QueryExecutor {
-  constructor(private readonly executor: QueryExecutor & { close(): Promise<void> }) {}
+  constructor(private readonly executor: TransactionalQueryExecutor) {}
 
   query(sql: string, parameters: readonly unknown[]): Promise<QueryResult> {
     return this.executor.query(sql, parameters);
+  }
+
+  withTransaction<T>(callback: (tx: QueryExecutor) => Promise<T>): Promise<T> {
+    return this.executor.withTransaction(callback);
   }
 
   async onModuleDestroy(): Promise<void> {

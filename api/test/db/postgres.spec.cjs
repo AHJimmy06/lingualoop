@@ -30,6 +30,28 @@ function fakePool({ result = { rows: [] }, error } = {}) {
   };
 }
 
+function transactionPool({ fail = [] } = {}) {
+  const calls = [];
+  let releaseCount = 0;
+  const client = {
+    async query(sql, parameters) {
+      calls.push({ sql, parameters });
+      if (fail.includes(sql)) throw new Error(`sensitive ${sql} failure`);
+      return { rows: [{ value: 1 }] };
+    },
+    release() { releaseCount += 1; },
+  };
+  return {
+    calls,
+    get releaseCount() { return releaseCount; },
+    pool: {
+      async query() { throw new Error('pool query must not be used in transaction'); },
+      async connect() { return client; },
+      async end() {},
+    },
+  };
+}
+
 test('runtime config defaults to private host and port and accepts only bounded explicit hosts', () => {
   assert.throws(() => loadLinguaLoopPostgresConfig({}), LinguaLoopDatabaseConfigurationError);
   for (const host of ['remote.example', 'postgres.example', 'https://postgres', 'localhost', '']) {
@@ -102,6 +124,92 @@ test('query and pool failures expose only a generic sanitized error', async () =
     assert.equal(error.stack.includes(secret), false);
     return true;
   });
+});
+
+test('transactions run parameterized callback queries on one client and commit before releasing it', async () => {
+  const fake = transactionPool();
+  const executor = createLinguaLoopQueryExecutor(CONFIG, fake.pool);
+  const parameters = ['report-id', "value'; DROP TABLE reports"];
+  const result = await executor.withTransaction(async (tx) =>
+    tx.query('SELECT $1, $2', parameters));
+
+  assert.deepEqual(result, { rows: [{ value: 1 }] });
+  assert.deepEqual(fake.calls, [
+    { sql: 'BEGIN', parameters: [] },
+    { sql: 'SELECT $1, $2', parameters },
+    { sql: 'COMMIT', parameters: [] },
+  ]);
+  assert.notEqual(fake.calls[1].parameters, parameters);
+  assert.equal(fake.releaseCount, 1);
+});
+
+test('transactions roll back callback, query, and commit failures and release exactly once', async (t) => {
+  for (const scenario of [
+    { name: 'callback', run: (tx) => { void tx; throw new Error('callback secret'); } },
+    { name: 'query', fail: ['SELECT secret'], run: (tx) => tx.query('SELECT secret', ['secret-value']) },
+    { name: 'commit', fail: ['COMMIT'], run: async () => 'done' },
+    { name: 'rollback failure', fail: ['SELECT secret', 'ROLLBACK'], run: (tx) => tx.query('SELECT secret', []) },
+  ]) {
+    await t.test(scenario.name, async () => {
+      const fake = transactionPool({ fail: scenario.fail });
+      const executor = createLinguaLoopQueryExecutor(CONFIG, fake.pool);
+      await assert.rejects(executor.withTransaction(scenario.run), (error) => {
+        assert.equal(error.name, 'LinguaLoopDatabaseError');
+        assert.equal(error.message, 'LinguaLoop database operation failed.');
+        assert.equal(error.message.includes('secret'), false);
+        return true;
+      });
+      assert.equal(fake.calls.at(-1).sql, 'ROLLBACK');
+      assert.equal(fake.releaseCount, 1);
+    });
+  }
+});
+
+test('caught transaction query failures still roll back and reject without committing', async () => {
+  const fake = transactionPool({ fail: ['SELECT sensitive'] });
+  const executor = createLinguaLoopQueryExecutor(CONFIG, fake.pool);
+  await assert.rejects(executor.withTransaction(async (tx) => {
+    try {
+      await tx.query('SELECT sensitive', ['private-value']);
+    } catch {
+      // Deliberately caught: a failed statement still invalidates the transaction.
+    }
+    return 'must not succeed';
+  }), (error) => {
+    assert.equal(error.name, 'LinguaLoopDatabaseError');
+    assert.equal(error.message, 'LinguaLoop database operation failed.');
+    assert.equal(error.message.includes('sensitive'), false);
+    assert.equal(error.message.includes('private-value'), false);
+    return true;
+  });
+  assert.deepEqual(fake.calls.map(({ sql }) => sql), ['BEGIN', 'SELECT sensitive', 'ROLLBACK']);
+  assert.equal(fake.releaseCount, 1);
+});
+
+test('transaction release failures remain generic and release is attempted once', async () => {
+  const fake = transactionPool();
+  let releaseCount = 0;
+  fake.pool.connect = async () => ({
+    async query(sql, parameters) { fake.calls.push({ sql, parameters }); return { rows: [] }; },
+    release() { releaseCount += 1; throw new Error('release secret'); },
+  });
+  const executor = createLinguaLoopQueryExecutor(CONFIG, fake.pool);
+  await assert.rejects(executor.withTransaction(async () => 'committed'), (error) => {
+    assert.equal(error.name, 'LinguaLoopDatabaseError');
+    assert.equal(error.message, 'LinguaLoop database operation failed.');
+    assert.equal(error.message.includes('secret'), false);
+    return true;
+  });
+  assert.equal(releaseCount, 1);
+});
+
+test('transactions reject unsupported injected pools and closed owned executors', async () => {
+  const unsupported = createLinguaLoopQueryExecutor(CONFIG, fakePool().pool);
+  await assert.rejects(unsupported.withTransaction(async () => 'unused'), LinguaLoopDatabaseError);
+
+  const closed = createLinguaLoopQueryExecutor(CONFIG);
+  await closed.close();
+  await assert.rejects(closed.withTransaction(async () => 'unused'), LinguaLoopDatabaseError);
 });
 
 test('owned pool idle-client error event is consumed without logging or crashing', async () => {
