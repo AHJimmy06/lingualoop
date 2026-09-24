@@ -1,4 +1,4 @@
-import { Controller, Get, HttpException, Inject, Param, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, HttpCode, HttpException, Inject, Param, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { ConfiguredVerifiedRequestGuard } from '../auth/google-auth.providers';
 import {
   LANGUAGE_PRACTICE_DURATIONS_MINUTES,
@@ -6,7 +6,12 @@ import {
   LANGUAGE_PRACTICE_TOPICS,
   LanguagePracticeSessionStore,
 } from './language-practice-session-store';
-import { LANGUAGE_PRACTICE_SESSION_STORE, LANGUAGE_PRACTICE_TURN_STORE } from './language-practice-session.providers';
+import {
+  LANGUAGE_PRACTICE_REPORT_STORE,
+  LANGUAGE_PRACTICE_SESSION_STORE,
+  LANGUAGE_PRACTICE_TURN_STORE,
+} from './language-practice-session.providers';
+import { LanguagePracticeReportAdmissionError, LanguagePracticeReportStore } from './language-practice-report-store';
 import { LanguagePracticeTurnStore } from './language-practice-turn-store';
 
 const INPUT_LANGUAGE = { code: 'en', label: 'English' };
@@ -32,6 +37,7 @@ type VerifiedRequest = { verifiedIdentity?: { ownerId: string } };
 
 type SessionStore = Pick<LanguagePracticeSessionStore, 'getSession'>;
 type TurnStore = Pick<LanguagePracticeTurnStore, 'listCompletedTurns'>;
+type ReportStore = Pick<LanguagePracticeReportStore, 'getOrCreate'>;
 
 @Controller('language-practice')
 @UseGuards(ConfiguredVerifiedRequestGuard)
@@ -39,6 +45,7 @@ export class LanguagePracticeSessionController {
   constructor(
     @Inject(LANGUAGE_PRACTICE_SESSION_STORE) private readonly sessions: SessionStore,
     @Inject(LANGUAGE_PRACTICE_TURN_STORE) private readonly turns: TurnStore,
+    @Inject(LANGUAGE_PRACTICE_REPORT_STORE) private readonly reports: ReportStore,
   ) {}
 
   @Get('options')
@@ -53,6 +60,29 @@ export class LanguagePracticeSessionController {
       maxFileSizeBytes: MAX_FILE_SIZE_BYTES,
       maxDurationMs: MAX_DURATION_MS,
     };
+  }
+
+  @Post('sessions/:sessionId/report')
+  @HttpCode(200)
+  async getReport(
+    @Param('sessionId') sessionId: string,
+    @Req() request: VerifiedRequest,
+    @Res({ passthrough: true }) response: { setHeader(name: string, value: string): void },
+  ) {
+    response.setHeader('Cache-Control', 'private, no-store');
+    if (!UUID_PATTERN.test(sessionId)) throw new HttpException('Invalid session identifier.', 400);
+    if (!request.verifiedIdentity || typeof request.verifiedIdentity.ownerId !== 'string') {
+      throw new HttpException('Authentication service unavailable.', 503);
+    }
+    try {
+      return await this.reports.getOrCreate(request.verifiedIdentity.ownerId, sessionId);
+    } catch (error) {
+      if (error instanceof LanguagePracticeReportAdmissionError) {
+        if (error.reason === 'not_found') throw new HttpException('Not found.', 404);
+        if (error.reason === 'not_closed') throw new HttpException('Session is not closed.', 409);
+      }
+      throw new HttpException('Language practice report is unavailable.', 503);
+    }
   }
 
   @Get('sessions/:sessionId')
