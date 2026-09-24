@@ -7,6 +7,7 @@ import { GoogleIdentityService } from './google-identity.service';
 import { loadGoogleOAuthConfig } from './google-oauth.config';
 import { GoogleLoginSession } from './google-login-session';
 import { LinguaLoopTokenService, LINGUALOOP_TOKEN_SIGNING_KEY } from './lingualoop-token.service';
+import { loadTokenSigningKey } from './token-signing-key.config';
 import {
   LINGUALOOP_IDENTITY_STORE,
   LINGUALOOP_OAUTH_STATE_STORE,
@@ -22,7 +23,7 @@ export function isGoogleAuthConfigurationValid(env: NodeJS.ProcessEnv = process.
     const clientId = requiredSetting('GOOGLE_CLIENT_ID', env.GOOGLE_CLIENT_ID);
     const clientSecret = requiredSetting('GOOGLE_CLIENT_SECRET', env.GOOGLE_CLIENT_SECRET);
     const audience = requiredSetting('LINGUALOOP_GOOGLE_AUDIENCE', env.LINGUALOOP_GOOGLE_AUDIENCE);
-    const signingKey = requiredSetting('LINGUALOOP_TOKEN_SIGNING_KEY', env.LINGUALOOP_TOKEN_SIGNING_KEY);
+    const signingKey = loadTokenSigningKey(env);
 
     // Reuse the same constructors as the runtime providers; none performs network or database I/O.
     new GoogleCodeExchange({ env: { ...env, GOOGLE_CALLBACK_URL: config.callbackUrl, GOOGLE_CLIENT_ID: clientId, GOOGLE_CLIENT_SECRET: clientSecret } });
@@ -49,7 +50,7 @@ function requiredSetting(name: string, value: string | undefined): string {
 }
 
 export const GOOGLE_AUTH_PROVIDERS: Provider[] = [
-  { provide: LINGUALOOP_TOKEN_SIGNING_KEY, useFactory: () => requiredSetting('LINGUALOOP_TOKEN_SIGNING_KEY', process.env.LINGUALOOP_TOKEN_SIGNING_KEY) },
+  { provide: LINGUALOOP_TOKEN_SIGNING_KEY, useFactory: () => loadTokenSigningKey() },
   { provide: JwtService, useFactory: () => new JwtService({}) },
   {
     provide: GoogleCodeExchange,

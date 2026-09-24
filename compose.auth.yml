@@ -1,0 +1,12 @@
+services:
+  api:
+    environment:
+      LINGUALOOP_TOKEN_SIGNING_KEY_FILE: /run/secrets/lingualoop_token_signing_key
+    secrets:
+      - source: lingualoop_token_signing_key
+        target: lingualoop_token_signing_key
+        mode: 0400
+
+secrets:
+  lingualoop_token_signing_key:
+    file: ${LINGUALOOP_TOKEN_SIGNING_KEY_FILE:?Set LINGUALOOP_TOKEN_SIGNING_KEY_FILE to the host signing-key file}

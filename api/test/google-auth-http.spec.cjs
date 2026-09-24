@@ -54,7 +54,7 @@ function assertSafeHeaders(response) {
 test('missing Google settings leave Nest health routes live and do not mount auth routes', async (t) => {
   const names = [
     'GOOGLE_CALLBACK_URL', 'LINGUALOOP_WEB_ORIGIN', 'GOOGLE_CLIENT_ID',
-    'GOOGLE_CLIENT_SECRET', 'LINGUALOOP_GOOGLE_AUDIENCE', 'LINGUALOOP_TOKEN_SIGNING_KEY',
+    'GOOGLE_CLIENT_SECRET', 'LINGUALOOP_GOOGLE_AUDIENCE', 'LINGUALOOP_TOKEN_SIGNING_KEY', 'LINGUALOOP_TOKEN_SIGNING_KEY_FILE',
   ];
   const previous = new Map(names.map((name) => [name, process.env[name]]));
   for (const name of names) delete process.env[name];
@@ -92,7 +92,7 @@ test('missing Google settings leave Nest health routes live and do not mount aut
 test('malformed present Google settings keep health routes live and disable auth routes', async (t) => {
   const names = [
     'GOOGLE_CALLBACK_URL', 'LINGUALOOP_WEB_ORIGIN', 'GOOGLE_CLIENT_ID',
-    'GOOGLE_CLIENT_SECRET', 'LINGUALOOP_GOOGLE_AUDIENCE', 'LINGUALOOP_TOKEN_SIGNING_KEY',
+    'GOOGLE_CLIENT_SECRET', 'LINGUALOOP_GOOGLE_AUDIENCE', 'LINGUALOOP_TOKEN_SIGNING_KEY', 'LINGUALOOP_TOKEN_SIGNING_KEY_FILE',
   ];
   const valid = {
     GOOGLE_CALLBACK_URL: 'http://localhost:5000/auth/google/callback',
@@ -109,12 +109,19 @@ test('malformed present Google settings keep health routes live and disable auth
     { ...valid, GOOGLE_CLIENT_SECRET: '   ' },
     { ...valid, LINGUALOOP_GOOGLE_AUDIENCE: '   ' },
     { ...valid, LINGUALOOP_TOKEN_SIGNING_KEY: 'too-short' },
+    { ...valid, LINGUALOOP_TOKEN_SIGNING_KEY: undefined },
+    { ...valid, LINGUALOOP_TOKEN_SIGNING_KEY_FILE: 'relative/key' },
+    { ...valid, LINGUALOOP_TOKEN_SIGNING_KEY_FILE: '/synthetic/key' },
+    { ...valid, LINGUALOOP_TOKEN_SIGNING_KEY_FILE: '/synthetic/key', LINGUALOOP_TOKEN_SIGNING_KEY: 'b'.repeat(32) },
   ];
   const previous = new Map(names.map((name) => [name, process.env[name]]));
   let appControllers;
   try {
     for (const settings of malformed) {
-      for (const name of names) process.env[name] = settings[name];
+      for (const name of names) {
+        if (settings[name] === undefined) delete process.env[name];
+        else process.env[name] = settings[name];
+      }
       const modulePath = require.resolve('../dist/app.module.js');
       delete require.cache[modulePath];
       const AppModule = require(modulePath).AppModule;
@@ -149,7 +156,7 @@ test('malformed present Google settings keep health routes live and disable auth
 test('fully valid Google settings continue to register auth routes and providers', () => {
   const names = [
     'GOOGLE_CALLBACK_URL', 'LINGUALOOP_WEB_ORIGIN', 'GOOGLE_CLIENT_ID',
-    'GOOGLE_CLIENT_SECRET', 'LINGUALOOP_GOOGLE_AUDIENCE', 'LINGUALOOP_TOKEN_SIGNING_KEY',
+    'GOOGLE_CLIENT_SECRET', 'LINGUALOOP_GOOGLE_AUDIENCE', 'LINGUALOOP_TOKEN_SIGNING_KEY', 'LINGUALOOP_TOKEN_SIGNING_KEY_FILE',
   ];
   const settings = {
     GOOGLE_CALLBACK_URL: 'http://localhost:5000/auth/google/callback',
@@ -161,7 +168,10 @@ test('fully valid Google settings continue to register auth routes and providers
   };
   const previous = new Map(names.map((name) => [name, process.env[name]]));
   try {
-    for (const name of names) process.env[name] = settings[name];
+    for (const name of names) {
+      if (settings[name] === undefined) delete process.env[name];
+      else process.env[name] = settings[name];
+    }
     const modulePath = require.resolve('../dist/app.module.js');
     delete require.cache[modulePath];
     const AppModule = require(modulePath).AppModule;
