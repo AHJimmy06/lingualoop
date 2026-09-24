@@ -52,6 +52,21 @@ export class AuthSession {
     }
   }
 
+  async postLanguagePractice(url: string, body: Record<string, unknown> | FormData): Promise<Response | null> {
+    if (!this.isLanguagePracticeUrl(url) || this.localRefreshHeld) return null;
+    if (!this.accessToken && (await this.refresh()) !== 'authenticated') return null;
+    if (this.localRefreshHeld) return null;
+
+    const generation = this.generation;
+    let response = await this.sendLanguagePracticePost(url, body, generation);
+    if (!response || response.status !== 401 || this.localRefreshHeld || generation !== this.generation) return response;
+    if ((await this.refresh()) !== 'authenticated' || this.localRefreshHeld || generation !== this.generation) return null;
+    response = await this.sendLanguagePracticePost(url, body, generation);
+    if (this.localRefreshHeld || generation !== this.generation) return null;
+    if (response?.status === 401) this.accessToken = null;
+    return response;
+  }
+
   refresh(): Promise<RefreshResult> {
     if (this.localRefreshHeld) return Promise.resolve('no-session');
     if (this.refreshInFlight) return this.refreshInFlight;
@@ -99,6 +114,62 @@ export class AuthSession {
     if (response !== 'revoked') return false;
     this.clearLocal();
     return true;
+  }
+
+  private isLanguagePracticeUrl(value: string): boolean {
+    if (typeof value !== 'string' || !value.startsWith('/api/language-practice/')) return false;
+    try {
+      const origin = globalThis.location?.origin ?? 'http://localhost';
+      const url = new URL(value, origin);
+      return url.origin === origin && url.pathname.startsWith('/api/language-practice/') && !url.hash;
+    } catch {
+      return false;
+    }
+  }
+
+  private isLanguagePracticeTurnUrl(value: string): boolean {
+    try {
+      const origin = globalThis.location?.origin ?? 'http://localhost';
+      const pathname = new URL(value, origin).pathname;
+      return /^\/api\/language-practice\/sessions\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/turns$/i.test(pathname);
+    } catch {
+      return false;
+    }
+  }
+
+  private async sendLanguagePracticePost(
+    url: string,
+    body: Record<string, unknown> | FormData,
+    generation: number,
+  ): Promise<Response | null> {
+    if (!this.accessToken || this.localRefreshHeld || generation !== this.generation) return null;
+    const formData = typeof FormData !== 'undefined' && body instanceof FormData;
+    let payload: BodyInit;
+    try {
+      payload = formData ? body as FormData : JSON.stringify(body);
+    } catch {
+      return null;
+    }
+    const controller = new AbortController();
+    const timeoutMs = formData && this.isLanguagePracticeTurnUrl(url) ? 240_000 : 90_000;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await this.request(url, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          ...(formData ? {} : { 'Content-Type': 'application/json' }),
+        },
+        body: payload,
+        signal: controller.signal,
+      });
+      return this.localRefreshHeld || generation !== this.generation ? null : response;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   private async performRefresh(generation: number): Promise<RefreshResult> {
