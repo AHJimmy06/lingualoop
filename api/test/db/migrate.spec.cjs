@@ -8,7 +8,7 @@ const migrationsDir = path.resolve(__dirname, '../../db/migrations');
 const names = [
   '001_owner_identity.sql', '002_oauth_state.sql',
   '003_auth_sessions.sql', '004_refresh_rotation.sql',
-  '005_language_practice_sessions.sql',
+  '005_language_practice_sessions.sql', '006_language_practice_turns.sql',
 ];
 const lock = 'lingualoop:schema-migrations';
 const migrationSql = names.map((name) => require('node:fs').readFileSync(path.join(migrationsDir, name), 'utf8'));
@@ -36,7 +36,7 @@ function fakeClient({ ledger = false, applied = [], collision = [], failOnSql } 
 
 test('applies ordered SQL under LinguaLoop advisory lock and closes the client', async () => {
   const fake = fakeClient();
-  assert.equal(await runLinguaLoopMigrations(fake.client, migrationsDir), 5);
+  assert.equal(await runLinguaLoopMigrations(fake.client, migrationsDir), 6);
   assert.deepEqual(fake.calls[0].sql, 'BEGIN');
   assert.deepEqual(fake.calls[1], {
     sql: 'SELECT pg_advisory_xact_lock(hashtext($1))', parameters: [lock],
@@ -47,11 +47,11 @@ test('applies ordered SQL under LinguaLoop advisory lock and closes the client',
   assert.equal(fake.ended, 1);
 });
 
-test('an unexpected sequential 005 migration is rejected before any database query', async () => {
+test('an unexpected sequential migration is rejected before any database query', async () => {
   const fsPromises = require('node:fs').promises;
   const originalReaddir = fsPromises.readdir;
   const fake = fakeClient();
-  fsPromises.readdir = async () => [...names, '005_surprise.sql'].map((name) => ({ name }));
+  fsPromises.readdir = async () => [...names, '007_surprise.sql'].map((name) => ({ name }));
   try {
     await assert.rejects(runLinguaLoopMigrations(fake.client, migrationsDir), /LinguaLoop migration failed/);
   } finally {
