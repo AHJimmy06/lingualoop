@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { AuthSession, type RefreshResult } from './auth-session';
 import { MAX_AUDIO_BYTES, MAX_RECORDING_MS, selectSupportedAudioMimeType, transcriptionErrorMessage } from './practice-audio';
+import { releaseAudio, synthesisErrorMessage, type SynthesisLanguage } from './practice-synthesis';
 
 const session = new AuthSession();
 const state = ref<'checking' | 'signed-out' | 'authenticated' | 'unavailable'>('checking');
@@ -13,11 +14,25 @@ const stopping = ref(false);
 const transcribing = ref(false);
 const audioMessage = ref('');
 const transcript = ref('');
+const synthesisLanguage = ref<SynthesisLanguage>('en');
+const synthesizing = ref(false);
+const synthesisMessage = ref('');
+const synthesisUrl = ref<string | null>(null);
+const audioPlayer = ref<HTMLAudioElement | null>(null);
+let synthesisSequence = 0;
 let recorder: MediaRecorder | null = null;
 let stream: MediaStream | null = null;
 let recordingTimer: ReturnType<typeof setTimeout> | null = null;
 let captureSequence = 0;
 let discardCapture = false;
+
+watch([transcript, synthesisLanguage], () => {
+  synthesisSequence++;
+  synthesizing.value = false;
+  synthesisMessage.value = '';
+  releaseAudio(audioPlayer.value, synthesisUrl.value);
+  synthesisUrl.value = null;
+});
 
 function showRefreshResult(result: RefreshResult): void {
   if (state.value === 'authenticated' && result !== 'authenticated') discardPractice();
@@ -43,6 +58,11 @@ async function checkSession(): Promise<void> {
 
 function discardPractice(): void {
   captureSequence++;
+  synthesisSequence++;
+  synthesizing.value = false;
+  synthesisMessage.value = '';
+  releaseAudio(audioPlayer.value, synthesisUrl.value);
+  synthesisUrl.value = null;
   discardCapture = true;
   starting.value = false;
   stopping.value = false;
@@ -161,7 +181,31 @@ async function uploadRecording(audio: Blob): Promise<void> {
     transcript.value = result.transcript;
     audioMessage.value = 'Transcription complete.';
   } else {
+    if (!session.authenticated) {
+      showRefreshResult('no-session');
+      return;
+    }
     audioMessage.value = transcriptionErrorMessage(result.error);
+  }
+}
+
+async function synthesizeTranscript(): Promise<void> {
+  if (synthesizing.value || state.value !== 'authenticated') return;
+  const sequence = ++synthesisSequence;
+  releaseAudio(audioPlayer.value, synthesisUrl.value);
+  synthesisUrl.value = null;
+  synthesisMessage.value = '';
+  synthesizing.value = true;
+  const result = await session.synthesize(synthesisLanguage.value, transcript.value);
+  if (sequence !== synthesisSequence) return;
+  synthesizing.value = false;
+  if (result.ok) {
+    synthesisUrl.value = URL.createObjectURL(result.wav);
+    synthesisMessage.value = 'Audio is ready. Press play to hear it.';
+  } else if (result.error === 'unauthorized') {
+    showRefreshResult('no-session');
+  } else {
+    synthesisMessage.value = synthesisErrorMessage(result.error);
   }
 }
 
@@ -229,12 +273,27 @@ onUnmounted(() => {
         </div>
         <p v-if="recording" class="note" role="status">Recording… It will stop automatically after 20 seconds.</p>
         <p v-if="audioMessage" class="note" role="status" aria-live="polite">{{ audioMessage }}</p>
-        <div v-if="transcript" class="transcript" aria-live="polite">
-          <h3>Transcript</h3>
-          <p>{{ transcript }}</p>
+        <div class="transcript">
+          <h3>Text to speak</h3>
+          <label for="transcript-text">Edit the text to hear it spoken</label>
+          <textarea id="transcript-text" v-model="transcript" maxlength="500" rows="4" />
+          <div class="actions synthesis-actions">
+            <label for="synthesis-language">Voice language</label>
+            <select id="synthesis-language" v-model="synthesisLanguage">
+              <option value="en">English</option>
+              <option value="es">Spanish</option>
+            </select>
+            <button type="button" :disabled="synthesizing || !transcript.trim()" @click="synthesizeTranscript">
+              {{ synthesizing ? 'Preparing speech…' : 'Synthesize speech' }}
+            </button>
+          </div>
+          <p v-if="synthesisMessage" class="note" role="status" aria-live="polite">{{ synthesisMessage }}</p>
+          <audio v-if="synthesisUrl" ref="audioPlayer" :src="synthesisUrl" controls preload="none">
+            Your browser cannot play this audio.
+          </audio>
         </div>
       </section>
-      <p class="note">Google sign-in opens in this tab. Audio is not saved; no coaching or speech playback is included.</p>
+      <p class="note">Google sign-in opens in this tab. Audio is not saved. Speech is generated only when requested; no coaching is included.</p>
     </section>
   </main>
 </template>
@@ -319,9 +378,49 @@ h1 {
   font-size: 1rem;
 }
 
-.transcript p {
-  margin-bottom: 0;
-  white-space: pre-wrap;
+.transcript label {
+  display: block;
+  margin-top: 0.75rem;
+  color: #536078;
+  font-size: 0.9rem;
+}
+
+.transcript textarea {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 0.4rem;
+  padding: 0.7rem;
+  border: 1px solid #c5cee0;
+  border-radius: 0.5rem;
+  color: inherit;
+  font: inherit;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.synthesis-actions {
+  align-items: center;
+  margin-top: 0.75rem;
+}
+
+.synthesis-actions label {
+  margin: 0;
+}
+
+.synthesis-actions select {
+  min-height: 2.75rem;
+  padding: 0.5rem;
+  border: 1px solid #c5cee0;
+  border-radius: 0.5rem;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+}
+
+.transcript audio {
+  display: block;
+  width: 100%;
+  margin-top: 0.75rem;
 }
 
 h2 {

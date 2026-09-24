@@ -1,3 +1,5 @@
+import { MAX_SYNTHESIS_WAV_BYTES, validateSynthesisText, validateWavBlob, type SynthesisLanguage, type SynthesisResult } from './practice-synthesis';
+
 export type RefreshResult = 'authenticated' | 'no-session' | 'unavailable';
 
 export type TranscriptionResult =
@@ -30,6 +32,19 @@ export class AuthSession {
       result = await this.sendTranscription(audio);
     }
     return result === 'unauthorized' ? { ok: false, error: 'failed' } : result;
+  }
+
+  async synthesize(language: SynthesisLanguage, text: string): Promise<SynthesisResult> {
+    const invalid = validateSynthesisText(text);
+    if (invalid) return { ok: false, error: invalid };
+    let result = await this.sendSynthesis(language, text);
+    if (result === 'unauthorized') {
+      const refreshed = await this.refresh();
+      if (refreshed === 'no-session') return { ok: false, error: 'unauthorized' };
+      if (refreshed !== 'authenticated') return { ok: false, error: 'unavailable' };
+      result = await this.sendSynthesis(language, text);
+    }
+    return result === 'unauthorized' ? { ok: false, error: 'unauthorized' } : result;
   }
 
   async logout(): Promise<boolean> {
@@ -98,6 +113,54 @@ export class AuthSession {
         return { ok: true, transcript: body.transcript };
       }
       return { ok: false, error: 'failed' };
+    } catch {
+      return { ok: false, error: 'unavailable' };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private async sendSynthesis(language: SynthesisLanguage, text: string): Promise<SynthesisResult | 'unauthorized'> {
+    if (!this.accessToken) return 'unauthorized';
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 90_000);
+    try {
+      const response = await this.request('/api/practice/synthesize', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ language, text }),
+        signal: controller.signal,
+      });
+      if (response.status === 401) return 'unauthorized';
+      if (response.status === 404) return { ok: false, error: 'not-found' };
+      if (response.status === 429) return { ok: false, error: 'rate-limited' };
+      if (response.status === 503) return { ok: false, error: 'unavailable' };
+      if (response.status !== 200 || response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase() !== 'audio/wav') {
+        return { ok: false, error: 'failed' };
+      }
+      const declaredLength = Number(response.headers.get('content-length'));
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_SYNTHESIS_WAV_BYTES) return { ok: false, error: 'failed' };
+      if (!response.body) return { ok: false, error: 'failed' };
+      const reader = response.body.getReader();
+      const chunks: ArrayBuffer[] = [];
+      let size = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > MAX_SYNTHESIS_WAV_BYTES) {
+          await reader.cancel();
+          return { ok: false, error: 'failed' };
+        }
+        chunks.push(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer);
+      }
+      const wav = new Blob(chunks, { type: 'audio/wav' });
+      if (!(await validateWavBlob(wav))) return { ok: false, error: 'failed' };
+      return { ok: true, wav };
     } catch {
       return { ok: false, error: 'unavailable' };
     } finally {
