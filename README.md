@@ -43,7 +43,7 @@ The short-lived OAuth state cookie is host-only, `HttpOnly`, `SameSite=Lax`, `Pa
 
 Current API settings: `PORT`, `LINGUALOOP_DB_PASSWORD_FILE` (required; an absolute path to the dedicated password file), `LINGUALOOP_TOKEN_SIGNING_KEY_FILE` (absolute path to a raw 32+ byte signing-key file) or the compatible `LINGUALOOP_TOKEN_SIGNING_KEY` environment string (exactly one), and the Google auth settings described above (`GOOGLE_CALLBACK_URL`, `LINGUALOOP_WEB_ORIGIN`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `LINGUALOOP_GOOGLE_AUDIENCE`). The signing key file path setting contains only a path, never key content. Optional database connection settings are `LINGUALOOP_DB_HOST` (default `postgres`) and `LINGUALOOP_DB_PORT` (default `5432`). The API accepts only `postgres` or `127.0.0.1` as database host values and uses bounded connection and client-side query timeouts (`pg`'s `query_timeout`; no server-side `statement_timeout` is configured). Nest's default HTTP handling preserves standard 4xx responses and returns generic 500 responses for unknown failures; exception details are not logged. SIGTERM shutdown hooks close the Nest-owned PostgreSQL pool. The same password-file setting is used by the migration CLI.
 
-Optional local speech settings are listed in the private runtime section below; they do not imply that models are mounted or inference has been accepted. `LINGUALOOP_REDIS_URL`, `LINGUALOOP_OPENAI_MODEL`, and `LINGUALOOP_OPENAI_API_KEY` remain future settings, not evidence of configured integrations. This inventory contains names only, not values or credentials. No repository `.env` or `.env.example` was created or included; the provisioned private external env files are documented below.
+Optional local speech settings are listed in the private runtime section below; they do not imply that models are mounted or inference has been accepted. The coach provider/configuration slice recognizes `LINGUALOOP_OPENAI_API_KEY_FILE` and `LANGUAGE_PRACTICE_OPENAI_MODEL`, but it is deliberately not registered or activated; no coach request or paid report call is currently possible through the application. `LINGUALOOP_REDIS_URL`, `LINGUALOOP_OPENAI_MODEL`, and `LINGUALOOP_OPENAI_API_KEY` are not runtime settings. This inventory contains names only, not values or credentials. No repository `.env` or `.env.example` was created or included; the provisioned private external env files are documented below.
 
 ### Optional protected speech transcription
 
@@ -56,6 +56,21 @@ When complete Google authentication and the exact FastConformer/FFmpeg runtime s
 When complete Google authentication and the Piper executable, both `.onnx` model paths, and all four model/sidecar SHA-256 settings are valid, the API independently mounts `POST /practice/synthesize`; FastConformer/FFmpeg settings are not required. It requires the verified owner/session bearer and exactly `{ "language": "en"|"es", "text": "..." }`, with a 500-character limit and no control characters or extra fields. Only one synthesis runs per API process at a time. Success returns the Piper host's artifact-validated WAV bytes as `audio/wav`; errors are generic and responses are not cached. Piper processes and model verification start lazily on the first request, not during API startup. No audio/text is persisted and this route does not invoke coaching or paid services. Automated HTTP tests use fake hosts; real model and browser playback acceptance remain pending.
 
 The configured hashes pin the local files observed at provisioning time; they do not establish publisher provenance. The optional practice runtime overlay below loads only the path and model settings from these files and mounts the listed host artifacts read-only. Keep these external files intact when rolling back by omitting the overlay.
+
+### Inert coach provider configuration (not activated)
+
+The bounded coach slice has an OpenAI Responses adapter factory, but the API module does not register or construct it. The factory accepts only an explicit absolute key-file path and `LANGUAGE_PRACTICE_OPENAI_MODEL` equal to `gpt-5.6-luna` or `gpt-6-luna`; it requires exactly one non-empty `OPENAI_API_KEY=` line in the external key file, rejects group/world-accessible files, and creates an SDK client configured with zero retries and a 90-second timeout. The existing `CoachAdapter` makes one Responses request per invocation. This does not add a practice-turn route: a future route must first verify the owner/session and enforce a one-call-per-turn budget. No paid report call is supported or authorized by this slice.
+
+`compose.coach.yml` is an optional, API-only overlay. It mounts the external `coach.env` as a read-only Compose secret and passes only the nonsecret model identifier in the environment. It does not load `coach.env` through `env_file`, nor does it configure or change browser or NousAI environments. Validate the overlay with path-only settings and quiet output (do not use `docker compose config` without `--quiet`, because resolved configuration may expose secret values):
+
+```sh
+LINGUALOOP_DB_PASSWORD_FILE="$HOME/.local/share/lingualoop/postgres/password" \
+LINGUALOOP_OPENAI_API_KEY_FILE="$HOME/.local/share/lingualoop/coach.env" \
+LANGUAGE_PRACTICE_OPENAI_MODEL=gpt-5.6-luna \
+docker compose -p lingualoop -f compose.postgres.yml -f compose.coach.yml config --quiet
+```
+
+To roll back this configuration, omit `compose.coach.yml` from the Compose file list; retain the external key file. Do not start a provider or practice turn as part of this configuration-only step.
 
 ## Optional local voice runtime mounts (not connected)
 
