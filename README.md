@@ -49,7 +49,25 @@ Other future settings, not a claim that integrations are configured: `LINGUALOOP
 
 Two private files were provisioned outside the repository with mode `0600`: `~/.local/share/lingualoop/coach.env` contains only `OPENAI_API_KEY`; `~/.local/share/lingualoop/practice-models.env` contains only `LANGUAGE_PRACTICE_OPENAI_MODEL`, `LANGUAGE_PRACTICE_FASTCONFORMER_MODEL_PATH`, `LANGUAGE_PRACTICE_FASTCONFORMER_MODEL_SHA256`, `LANGUAGE_PRACTICE_PIPER_PATH`, `LANGUAGE_PRACTICE_PIPER_MODEL_EN`, `LANGUAGE_PRACTICE_PIPER_MODEL_ES`, `LANGUAGE_PRACTICE_FFMPEG_PATH`, `LINGUALOOP_PIPER_MODEL_EN_SHA256`, `LINGUALOOP_PIPER_SIDECAR_EN_SHA256`, `LINGUALOOP_PIPER_MODEL_ES_SHA256`, and `LINGUALOOP_PIPER_SIDECAR_ES_SHA256`. Do not reuse NousAI's whole `.env`, JWT/signing key, database, or data. No paid inference calls are authorized; obtain fresh explicit authorization before any paid call.
 
-The configured hashes pin the local files observed at provisioning time; they do not establish publisher provenance. These settings are not loaded or mounted into the API yet, and practice is not connected. Docker use will require explicit, appropriately scoped read-only mounts for model artifacts; this documentation does not configure them. Roll back future integration code/mounts independently; keep these external files intact until their deletion is explicitly authorized.
+The configured hashes pin the local files observed at provisioning time; they do not establish publisher provenance. The optional practice runtime overlay below loads only the path and model settings from these files and mounts the listed host artifacts read-only; practice remains unconnected. Keep these external files intact when rolling back by omitting the overlay.
+
+## Optional local voice runtime mounts (not connected)
+
+The API image includes only the LinguaLoop FastConformer worker script; it does not include Python dependencies or model bytes. For host-specific development only, the optional `compose.practice.yml` overlay bind-mounts the configured STT venv, Python distribution directory, FastConformer model file, curated Piper runtime directory (including models), and FFmpeg binary read-only at their existing absolute paths. The host files must exist; Compose is configured not to create missing mount sources. This stages runtime assets but does not establish that speech processing is wired or live.
+
+Use both external configuration files with Compose's multiple `--env-file` options. Supply the existing database, signing-key, and Google-auth file paths as usual; do not load or mount `coach.env` or NousAI's `.env`:
+
+```sh
+LINGUALOOP_DB_PASSWORD_FILE="$HOME/.local/share/lingualoop/postgres/password" \
+LINGUALOOP_TOKEN_SIGNING_KEY_FILE="$HOME/.local/share/lingualoop/token-signing-key" \
+LINGUALOOP_GOOGLE_ENV_FILE="$HOME/.local/share/lingualoop/google-oauth.env" \
+docker compose --env-file "$HOME/.local/share/lingualoop/practice-models.env" \
+  --env-file "$HOME/.local/share/lingualoop/practice-runtime.env" \
+  -p lingualoop -f compose.postgres.yml -f compose.auth.yml -f compose.practice.yml \
+  up -d --build api
+```
+
+These bind mounts are machine-specific development configuration, not a portable or production deployment. To roll back this staging, omit `compose.practice.yml`; retain the external files.
 
 ## Local PostgreSQL
 
