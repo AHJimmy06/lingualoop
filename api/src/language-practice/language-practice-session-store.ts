@@ -27,6 +27,8 @@ export interface LanguagePracticeSession {
   durationMinutes: LanguagePracticeDurationMinutes;
   startedAt: string;
   expiresAt: string;
+  remainingMs: number;
+  turnInProgress: false;
 }
 
 export class LanguagePracticeSessionStoreError extends Error {
@@ -43,12 +45,17 @@ const CREATE_SESSION_SQL = `
   VALUES ($1, $2, $3, $4, NOW(), NOW() + $4 * INTERVAL '1 minute')
   RETURNING id, status, level, topic,
     duration_minutes AS "durationMinutes",
-    started_at AS "startedAt", expires_at AS "expiresAt"
+    started_at AS "startedAt", expires_at AS "expiresAt",
+    duration_minutes * 60000 AS "remainingMs"
 `;
 const FIND_SESSION_SQL = `
-  SELECT id, status, level, topic,
+  SELECT id,
+    CASE WHEN status = 'COMPLETED' THEN status
+      WHEN expires_at <= NOW() THEN 'EXPIRED' ELSE status END AS status,
+    level, topic,
     duration_minutes AS "durationMinutes",
-    started_at AS "startedAt", expires_at AS "expiresAt"
+    started_at AS "startedAt", expires_at AS "expiresAt",
+    GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (expires_at - NOW())) * 1000)::INTEGER) AS "remainingMs"
   FROM lingualoop_language_practice_sessions
   WHERE owner_id = $1 AND id = $2
 `;
@@ -80,6 +87,9 @@ function session(value: unknown): LanguagePracticeSession {
       (row.status !== 'ACTIVE' && row.status !== 'EXPIRED' && row.status !== 'COMPLETED')) {
     throw new LanguagePracticeSessionStoreError();
   }
+  if (typeof row.remainingMs !== 'number' || !Number.isSafeInteger(row.remainingMs) || row.remainingMs < 0) {
+    throw new LanguagePracticeSessionStoreError();
+  }
   return {
     id: row.id,
     status: row.status,
@@ -88,6 +98,8 @@ function session(value: unknown): LanguagePracticeSession {
     durationMinutes: row.durationMinutes as LanguagePracticeDurationMinutes,
     startedAt: timestamp(row.startedAt),
     expiresAt: timestamp(row.expiresAt),
+    remainingMs: row.remainingMs,
+    turnInProgress: false,
   };
 }
 

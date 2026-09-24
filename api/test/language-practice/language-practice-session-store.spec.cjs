@@ -17,6 +17,7 @@ const createdRow = {
   durationMinutes: 10,
   startedAt: new Date('2026-09-24T12:00:00.000Z'),
   expiresAt: new Date('2026-09-24T12:10:00.000Z'),
+  remainingMs: 600000,
 };
 
 function fakeExecutor(result, error) {
@@ -46,10 +47,12 @@ test('creates an original-catalog session with owner binding and database-derive
     durationMinutes: 10,
     startedAt: '2026-09-24T12:00:00.000Z',
     expiresAt: '2026-09-24T12:10:00.000Z',
+    remainingMs: 600000,
+    turnInProgress: false,
   });
   assert.match(fake.calls[0].sql, /INSERT INTO lingualoop_language_practice_sessions/i);
   assert.match(fake.calls[0].sql, /VALUES \(\$1, \$2, \$3, \$4, NOW\(\), NOW\(\) \+ \$4 \* INTERVAL '1 minute'\)/i);
-  assert.match(fake.calls[0].sql, /RETURNING id, status, level, topic,\s+duration_minutes AS "durationMinutes",\s+started_at AS "startedAt", expires_at AS "expiresAt"/i);
+  assert.match(fake.calls[0].sql, /RETURNING id, status, level, topic,\s+duration_minutes AS "durationMinutes",\s+started_at AS "startedAt", expires_at AS "expiresAt",\s+duration_minutes \* 60000 AS "remainingMs"/i);
   assert.deepEqual(fake.calls[0].parameters, [OWNER_ID, 'B1', 'travel', 10]);
   assert.ok(!fake.calls[0].sql.includes(OWNER_ID));
 });
@@ -59,6 +62,7 @@ test('retrieves a session only by the bound owner and session UUIDs', async () =
   const session = await fake.store.getSession(OWNER_ID, SESSION_ID);
   assert.equal(session.id, SESSION_ID);
   assert.match(fake.calls[0].sql, /WHERE owner_id = \$1 AND id = \$2/i);
+  assert.match(fake.calls[0].sql, /GREATEST\(0, FLOOR\(EXTRACT\(EPOCH FROM \(expires_at - NOW\(\)\)\) \* 1000\)::INTEGER\) AS "remainingMs"/i);
   assert.deepEqual(fake.calls[0].parameters, [OWNER_ID, SESSION_ID]);
   assert.equal(await fakeExecutor({ rows: [] }).store.getSession(OWNER_ID, SESSION_ID), null);
 });

@@ -6,6 +6,8 @@ import { GOOGLE_AUTH_PROVIDERS, isGoogleAuthConfigurationValid } from './auth/go
 import { createPracticeRuntimeProviders, loadPracticeRuntimeConfiguration } from './language-practice/practice-runtime.providers';
 import { PracticeAudioController } from './language-practice/practice-audio.controller';
 import { PracticeSynthesisController } from './language-practice/practice-synthesis.controller';
+import { LanguagePracticeSessionController } from './language-practice/language-practice-session.controller';
+import { LANGUAGE_PRACTICE_SESSION_PROVIDERS } from './language-practice/language-practice-session.providers';
 import { createPiperRuntimeProviders, loadPiperRuntimeConfiguration } from './language-practice/piper-runtime.providers';
 import { PRACTICE_AUDIO_PREPARER, PracticeAudioService, practiceAudioPreparer } from './language-practice/practice-audio.service';
 import {
@@ -21,7 +23,7 @@ const piperRuntimeConfiguration = googleAuthConfigured ? loadPiperRuntimeConfigu
 @Module({
   controllers: [
     HealthController,
-    ...(googleAuthConfigured ? [GoogleAuthController] : []),
+    ...(googleAuthConfigured ? [GoogleAuthController, LanguagePracticeSessionController] : []),
     ...(googleAuthConfigured && practiceRuntimeConfiguration ? [PracticeAudioController] : []),
     ...(googleAuthConfigured && piperRuntimeConfiguration ? [PracticeSynthesisController] : []),
   ],
@@ -31,6 +33,7 @@ const piperRuntimeConfiguration = googleAuthConfigured ? loadPiperRuntimeConfigu
       useFactory: () => new LinguaLoopPostgresProvider(createLinguaLoopQueryExecutor()),
     },
     ...AUTH_STORE_PROVIDERS,
+    ...(googleAuthConfigured ? LANGUAGE_PRACTICE_SESSION_PROVIDERS : []),
     ...(googleAuthConfigured ? GOOGLE_AUTH_PROVIDERS : []),
     ...(practiceRuntimeConfiguration ? [
       ...createPracticeRuntimeProviders(practiceRuntimeConfiguration),
