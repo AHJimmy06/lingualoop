@@ -5,6 +5,8 @@ import { AUTH_STORE_PROVIDERS } from './auth/auth-store.providers';
 import { GOOGLE_AUTH_PROVIDERS, isGoogleAuthConfigurationValid } from './auth/google-auth.providers';
 import { createPracticeRuntimeProviders, loadPracticeRuntimeConfiguration } from './language-practice/practice-runtime.providers';
 import { PracticeAudioController } from './language-practice/practice-audio.controller';
+import { PracticeSynthesisController } from './language-practice/practice-synthesis.controller';
+import { createPiperRuntimeProviders, loadPiperRuntimeConfiguration } from './language-practice/piper-runtime.providers';
 import { PRACTICE_AUDIO_PREPARER, PracticeAudioService, practiceAudioPreparer } from './language-practice/practice-audio.service';
 import {
   createLinguaLoopQueryExecutor,
@@ -14,12 +16,14 @@ import {
 
 const googleAuthConfigured = isGoogleAuthConfigurationValid();
 const practiceRuntimeConfiguration = googleAuthConfigured ? loadPracticeRuntimeConfiguration() : undefined;
+const piperRuntimeConfiguration = googleAuthConfigured ? loadPiperRuntimeConfiguration() : undefined;
 
 @Module({
   controllers: [
     HealthController,
     ...(googleAuthConfigured ? [GoogleAuthController] : []),
     ...(googleAuthConfigured && practiceRuntimeConfiguration ? [PracticeAudioController] : []),
+    ...(googleAuthConfigured && piperRuntimeConfiguration ? [PracticeSynthesisController] : []),
   ],
   providers: [
     {
@@ -33,6 +37,8 @@ const practiceRuntimeConfiguration = googleAuthConfigured ? loadPracticeRuntimeC
       { provide: PRACTICE_AUDIO_PREPARER, useValue: practiceAudioPreparer },
       PracticeAudioService,
     ] : []),
+    ...(googleAuthConfigured && piperRuntimeConfiguration
+      ? createPiperRuntimeProviders(piperRuntimeConfiguration) : []),
     ...(googleAuthConfigured ? [{ provide: GOOGLE_AUTH_RATE_LIMITER, useClass: GoogleAuthRateLimiter }] : []),
   ],
 })
