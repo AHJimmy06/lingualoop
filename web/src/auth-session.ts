@@ -9,6 +9,8 @@ export type TranscriptionResult =
 export class AuthSession {
   private accessToken: string | null = null;
   private refreshInFlight: Promise<RefreshResult> | null = null;
+  private generation = 0;
+  private localRefreshHeld = false;
 
   constructor(private readonly request: typeof fetch = globalThis.fetch.bind(globalThis)) {}
 
@@ -16,13 +18,51 @@ export class AuthSession {
     return this.accessToken !== null;
   }
 
+  clearLocal(): void {
+    this.generation++;
+    this.localRefreshHeld = true;
+    this.accessToken = null;
+    this.refreshInFlight = null;
+  }
+
+  async getWithRefresh(url: string): Promise<Response | null> {
+    if (this.localRefreshHeld) return null;
+    if (!this.accessToken && (await this.refresh()) !== 'authenticated') return null;
+    if (this.localRefreshHeld) return null;
+    let response: Response;
+    try {
+      response = await this.request(url, {
+        method: 'GET',
+        credentials: 'same-origin',
+        headers: { Authorization: `Bearer ${this.accessToken}` },
+      });
+      if (this.localRefreshHeld) return null;
+      if (response.status !== 401) return response;
+      if ((await this.refresh()) !== 'authenticated' || this.localRefreshHeld) return null;
+      response = await this.request(url, {
+        method: 'GET',
+        credentials: 'same-origin',
+        headers: { Authorization: `Bearer ${this.accessToken}` },
+      });
+      if (this.localRefreshHeld) return null;
+      if (response.status === 401) this.accessToken = null;
+      return response;
+    } catch {
+      return null;
+    }
+  }
+
   refresh(): Promise<RefreshResult> {
+    if (this.localRefreshHeld) return Promise.resolve('no-session');
     if (this.refreshInFlight) return this.refreshInFlight;
 
-    this.refreshInFlight = this.performRefresh().finally(() => {
-      this.refreshInFlight = null;
+    const generation = this.generation;
+    let pending: Promise<RefreshResult>;
+    pending = this.performRefresh(generation).finally(() => {
+      if (this.refreshInFlight === pending) this.refreshInFlight = null;
     });
-    return this.refreshInFlight;
+    this.refreshInFlight = pending;
+    return pending;
   }
 
   async transcribe(audio: Blob): Promise<TranscriptionResult> {
@@ -57,16 +97,17 @@ export class AuthSession {
     }
 
     if (response !== 'revoked') return false;
-    this.accessToken = null;
+    this.clearLocal();
     return true;
   }
 
-  private async performRefresh(): Promise<RefreshResult> {
+  private async performRefresh(generation: number): Promise<RefreshResult> {
     try {
       const response = await this.request('/api/auth/refresh', {
         method: 'POST',
         credentials: 'same-origin',
       });
+      if (generation !== this.generation || this.localRefreshHeld) return 'no-session';
       if (response.status === 401) {
         this.accessToken = null;
         return 'no-session';
@@ -74,6 +115,7 @@ export class AuthSession {
       if (response.status !== 200) return 'unavailable';
 
       const body: unknown = await response.json();
+      if (generation !== this.generation || this.localRefreshHeld) return 'no-session';
       if (typeof body !== 'object' || body === null || !('accessToken' in body) ||
           typeof body.accessToken !== 'string' || body.accessToken.length === 0) {
         return 'unavailable';
@@ -81,7 +123,7 @@ export class AuthSession {
       this.accessToken = body.accessToken;
       return 'authenticated';
     } catch {
-      return 'unavailable';
+      return this.localRefreshHeld ? 'no-session' : 'unavailable';
     }
   }
 
@@ -184,3 +226,5 @@ export class AuthSession {
     }
   }
 }
+
+export const authSession = new AuthSession();
