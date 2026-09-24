@@ -1,5 +1,7 @@
 services:
   api:
+    env_file:
+      - ${LINGUALOOP_GOOGLE_ENV_FILE:?Set LINGUALOOP_GOOGLE_ENV_FILE to the host Google auth env file}
     environment:
       LINGUALOOP_TOKEN_SIGNING_KEY_FILE: /run/secrets/lingualoop_token_signing_key
     secrets:

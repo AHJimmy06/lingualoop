@@ -23,7 +23,7 @@ The API contains an OAuth-state service, a verified-request guard, a LinguaLoop 
 
 NousAI is stopped and is not an identity provider for LinguaLoop. The retained obsolete NousAI profile-introspection client/test are historical code, not a working login or handoff; they do not establish an authenticated LinguaLoop session. No token transfer from a NousAI browser session is implemented.
 
-Google is the only planned login provider; Microsoft login is out of scope. The existing Google OAuth application registration may be reused after adding an exact LinguaLoop callback URL and provisioning its client credentials explicitly for LinguaLoop. The callback flow validates browser-bound one-time state, uses the configured callback URL for code exchange, and passes the returned untrusted ID token to the Google verifier through `GoogleLoginSession`. Before using the route, register the exact callback with Google and provision `GOOGLE_CALLBACK_URL`, `LINGUALOOP_WEB_ORIGIN`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `LINGUALOOP_GOOGLE_AUDIENCE`, and one token signing key source; no credential values belong in this README or source control. Use `LINGUALOOP_TOKEN_SIGNING_KEY_FILE` with an absolute path to a raw key file of at least 32 bytes, or retain the compatible `LINGUALOOP_TOKEN_SIGNING_KEY` environment string option. Do not set both. The key is independent of the database password. Do not rotate the signing key after tokens have been issued: existing tokens would stop verifying. For the selected localhost setup, the callback is `http://localhost:5000/auth/google/callback` and the web origin is `http://localhost:5001`. The signing key must be independently generated for LinguaLoop and at least 32 bytes. No Google registration or credential provisioning has been verified, so these routes do not establish a claim of live Google login. The in-memory limiter is per process and is not a distributed or production abuse-control mechanism. Do not copy NousAI's `.env`, signing secret, JWTs, database, schema, users, or data. Auth-store providers are wired to the LinguaLoop database adapter; no old data is migrated or removed.
+Google is the only planned login provider; Microsoft login is out of scope. The existing Google OAuth application registration may be reused after adding an exact LinguaLoop callback URL and provisioning its client credentials explicitly for LinguaLoop. The callback flow validates browser-bound one-time state, uses the configured callback URL for code exchange, and passes the returned untrusted ID token to the Google verifier through `GoogleLoginSession`. Before using the route, register the exact callback with Google and provision its five runtime settings in the separate restricted host env file described below, plus one token signing key source; no credential values belong in this README or source control. Use `LINGUALOOP_TOKEN_SIGNING_KEY_FILE` with an absolute path to a raw key file of at least 32 bytes, or retain the compatible `LINGUALOOP_TOKEN_SIGNING_KEY` environment string option. Do not set both. The key is independent of the database password. Do not rotate the signing key after tokens have been issued: existing tokens would stop verifying. For the selected localhost setup, the callback is `http://localhost:5000/auth/google/callback` and the web origin is `http://localhost:5001`. The signing key must be independently generated for LinguaLoop and at least 32 bytes. Offline configuration and tests do not establish a claim of live Google login; no successful browser login has been tested. The in-memory limiter is per process and is not a distributed or production abuse-control mechanism. Do not copy NousAI's `.env`, signing secret, JWTs, database, schema, users, or data. Auth-store providers are wired to the LinguaLoop database adapter; no old data is migrated or removed.
 
 ### OAuth URL configuration policy
 
@@ -62,7 +62,7 @@ set -C # Refuse to clobber a file created between the check and redirection.
 openssl rand 32 > "$token_key_file"
 ```
 
-For a local API process, set `LINGUALOOP_TOKEN_SIGNING_KEY_FILE` to the absolute host path of that file (for example, `$HOME/.local/share/lingualoop/token-signing-key`); the application reads the raw bytes. The existing `LINGUALOOP_TOKEN_SIGNING_KEY` string setting remains supported for compatible environments and tests, but must not be set alongside the file setting. The optional `compose.auth.yml` overlay mounts the separately configured host file as `/run/secrets/lingualoop_token_signing_key`; its `LINGUALOOP_TOKEN_SIGNING_KEY_FILE` host variable must contain only the absolute file path. It requests mode `0400` for the mounted key. Compose file-backed secrets may ignore requested ownership/mode depending on implementation; a metadata-only check on this machine observed a regular 0600 mount for the existing host file (the requested 0400 mode was ignored). The API intentionally refuses group/other-accessible mounts rather than weakening key-file checks, so inspect the mounted file's metadata in each target runtime before enabling auth. This signing-key secret is independent from `LINGUALOOP_DB_PASSWORD_FILE`. The base `compose.postgres.yml` has no signing-key requirement and supports PostgreSQL-only startup; API auth is disabled unless the optional overlay is included.
+For a local API process, set `LINGUALOOP_TOKEN_SIGNING_KEY_FILE` to the absolute host path of that file (for example, `$HOME/.local/share/lingualoop/token-signing-key`); the application reads the raw bytes. The existing `LINGUALOOP_TOKEN_SIGNING_KEY` string setting remains supported for compatible environments and tests, but must not be set alongside the file setting. The optional `compose.auth.yml` overlay mounts the separately configured host file as `/run/secrets/lingualoop_token_signing_key`; its `LINGUALOOP_TOKEN_SIGNING_KEY_FILE` host variable must contain only the absolute file path. It requests mode `0400` for the mounted key. Compose file-backed secrets may ignore requested ownership/mode depending on implementation; a metadata-only check on this machine observed a regular 0600 mount for the existing host file (the requested 0400 mode was ignored). The API intentionally refuses group/other-accessible mounts rather than weakening key-file checks, so inspect the mounted file's metadata in each target runtime before enabling auth. This signing-key secret is independent from `LINGUALOOP_DB_PASSWORD_FILE`. The base `compose.postgres.yml` has no signing-key or Google-env-file requirement and supports PostgreSQL-only startup; API auth is disabled unless the optional overlay is included.
 
 ```sh
 secret_dir="$HOME/.local/share/lingualoop/postgres"
@@ -93,6 +93,27 @@ LINGUALOOP_DB_PASSWORD_FILE="$HOME/.local/share/lingualoop/postgres/password" LI
 ```
 
 Compose publishes only the API on `127.0.0.1:5000`; PostgreSQL remains private. The API's `/health` reports process health only, not database connectivity. The browser uses `http://localhost:5001`, and the Vite proxy reaches the API at `http://localhost:5000` through `/api`. The IPv4 loopback Docker publish is a host bind, not the browser-facing OAuth hostname.
+
+The optional auth overlay also requires a separate Google settings env file outside the repository. Create `~/.local/share/lingualoop/google-oauth.env` with mode `0600`, containing only `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `LINGUALOOP_GOOGLE_AUDIENCE` (the client ID), `GOOGLE_CALLBACK_URL` (`http://localhost:5000/auth/google/callback`), and `LINGUALOOP_WEB_ORIGIN` (`http://localhost:5001`). Reuse the existing Google OAuth client credentials only in this LinguaLoop-specific file; never copy NousAI's whole `.env`, or share its JWTs or database. The overlay passes this file to the API only; the base PostgreSQL-only Compose configuration does not load it. Docker `env_file` values are visible to Docker-daemon administrators through container inspection, so use this only where daemon access is trusted.
+
+Start the API with the exact path-only invocation below; all variables here are host file paths, not credential values:
+
+```sh
+LINGUALOOP_DB_PASSWORD_FILE="$HOME/.local/share/lingualoop/postgres/password" LINGUALOOP_TOKEN_SIGNING_KEY_FILE="$HOME/.local/share/lingualoop/token-signing-key" LINGUALOOP_GOOGLE_ENV_FILE="$HOME/.local/share/lingualoop/google-oauth.env" docker compose -p lingualoop -f compose.postgres.yml -f compose.auth.yml up -d --build api
+```
+
+For a local direct API process instead of Compose, load the restricted settings into the launching shell without echoing or printing the variables, then run the API in that same shell:
+
+```sh
+set +x
+set -a
+. "$HOME/.local/share/lingualoop/google-oauth.env"
+set +a
+cd api
+LINGUALOOP_DB_PASSWORD_FILE="$HOME/.local/share/lingualoop/postgres/password" LINGUALOOP_TOKEN_SIGNING_KEY_FILE="$HOME/.local/share/lingualoop/token-signing-key" PORT=5000 pnpm dev
+```
+
+Keep shell tracing (`set -x`) off and never print the environment or resolved Compose configuration.
 
 ### Apply database migrations
 
