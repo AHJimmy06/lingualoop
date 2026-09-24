@@ -4,7 +4,7 @@ export class AuthSession {
   private accessToken: string | null = null;
   private refreshInFlight: Promise<RefreshResult> | null = null;
 
-  constructor(private readonly request: typeof fetch = fetch) {}
+  constructor(private readonly request: typeof fetch = globalThis.fetch.bind(globalThis)) {}
 
   get authenticated(): boolean {
     return this.accessToken !== null;
