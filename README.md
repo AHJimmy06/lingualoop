@@ -161,7 +161,7 @@ docker run --rm --network lingualoop-postgres-net \
   -w /app node:24-bookworm-slim node dist/db/migrate.js
 ```
 
-The runner verifies the SHA-256 checksums in `lingualoop_schema_migrations` and applies exactly `001_owner_identity.sql`, `002_oauth_state.sql`, `003_auth_sessions.sql`, and `004_refresh_rotation.sql`. An initial empty database reports `4 applied`; an unchanged repeat reports `0 applied`. The CLI is not run by API/Nest startup. The Nest runtime uses one shared PostgreSQL query executor for readiness and the registered auth-store providers. Store construction does not query PostgreSQL; only actual store operations do. Practice configuration and practice integrations remain unwired.
+The runner verifies SHA-256 checksums in `lingualoop_schema_migrations` and applies exactly migrations `001`–`006` in order, including owner-scoped practice sessions and turn-lease storage. An initial empty database reports `6 applied`; an unchanged repeat reports `0 applied`. On the existing local database, adding `005` and `006` reported `2 applied` on 2026-09-24. The CLI is not run by API/Nest startup. The Nest runtime uses one shared PostgreSQL query executor for readiness and auth/practice stores; constructing stores does not query PostgreSQL. Only protected practice options and owned session detail are exposed: creating sessions, processing turns, coaching, and reports are not yet connected.
 
 For scoped local access after the container is running, open `psql` inside it:
 
