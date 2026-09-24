@@ -8,6 +8,7 @@ const {
 
 const KEY = Buffer.from('lingualoop test signing key with 32+ bytes');
 const OTHER_KEY = Buffer.from('different test signing key with 32+ bytes');
+const SESSION_ID = '550e8400-e29b-41d4-a716-446655440000';
 const jwt = new JwtService();
 
 function service(key = KEY) {
@@ -27,30 +28,33 @@ async function rejectsAsInvalid(promise) {
 }
 
 test('issues and verifies a provider-neutral identity token', async () => {
-  const token = await service().issue({ issuer: 'google', subject: 'provider-user-123' });
+  const token = await service().issue({ issuer: 'google', subject: 'provider-user-123', sessionId: SESSION_ID });
 
   assert.equal(typeof token, 'string');
   const claims = jwt.decode(token);
   assert.equal(claims.iss, 'lingualoop');
   assert.equal(claims.aud, 'lingualoop-api');
+  assert.equal(claims.sid, SESSION_ID);
   assert.equal(claims.exp - claims.iat, 900);
   assert.deepEqual(await service().verifyBearerToken(token), {
     issuer: 'google',
     subject: 'provider-user-123',
+    sessionId: SESSION_ID,
   });
 });
 
 test('accepts a stable provider identifier and opaque non-ASCII subject', async () => {
-  const token = await service().issue({ issuer: 'tenant.provider-2', subject: '用户-123' });
+  const token = await service().issue({ issuer: 'tenant.provider-2', subject: '用户-123', sessionId: SESSION_ID });
 
   assert.deepEqual(await service().verifyBearerToken(token), {
     issuer: 'tenant.provider-2',
     subject: '用户-123',
+    sessionId: SESSION_ID,
   });
 });
 
 test('rejects tampered tokens, malformed tokens, and oversized tokens', async () => {
-  const token = await service().issue({ issuer: 'microsoft', subject: 'user-1' });
+  const token = await service().issue({ issuer: 'microsoft', subject: 'user-1', sessionId: SESSION_ID });
   const tampered = `${token.slice(0, -1)}${token.endsWith('A') ? 'B' : 'A'}`;
 
   await rejectsAsInvalid(service().verifyBearerToken(tampered));
@@ -59,7 +63,7 @@ test('rejects tampered tokens, malformed tokens, and oversized tokens', async ()
 });
 
 test('rejects a token signed with a different key', async () => {
-  const token = await service().issue({ issuer: 'google', subject: 'user-1' });
+  const token = await service().issue({ issuer: 'google', subject: 'user-1', sessionId: SESSION_ID });
 
   await rejectsAsInvalid(service(OTHER_KEY).verifyBearerToken(token));
 });
@@ -67,8 +71,17 @@ test('rejects a token signed with a different key', async () => {
 test('rejects expired tokens', async () => {
   const now = Math.floor(Date.now() / 1_000) - 120;
   const token = await signRaw(
-    { provider: 'google', sub: 'user-1', iat: now },
+    { provider: 'google', sub: 'user-1', sid: SESSION_ID, iat: now },
     { issuer: 'lingualoop', audience: 'lingualoop-api', expiresIn: 60 },
+  );
+
+  await rejectsAsInvalid(service().verifyBearerToken(token));
+});
+
+test('rejects otherwise valid LinguaLoop tokens without a session id', async () => {
+  const token = await signRaw(
+    { provider: 'google', sub: 'user-1' },
+    { issuer: 'lingualoop', audience: 'lingualoop-api', expiresIn: 900 },
   );
 
   await rejectsAsInvalid(service().verifyBearerToken(token));
@@ -77,7 +90,7 @@ test('rejects expired tokens', async () => {
 test('rejects correctly signed tokens without an expiration claim', async () => {
   const now = Math.floor(Date.now() / 1_000);
   const token = await signRaw(
-    { provider: 'google', sub: 'user-1', iat: now },
+    { provider: 'google', sub: 'user-1', sid: SESSION_ID, iat: now },
     { issuer: 'lingualoop', audience: 'lingualoop-api' },
   );
 
@@ -87,7 +100,7 @@ test('rejects correctly signed tokens without an expiration claim', async () => 
 test('rejects correctly signed tokens without an issued-at claim', async () => {
   const exp = Math.floor(Date.now() / 1_000) + 900;
   const token = await signRaw(
-    { provider: 'google', sub: 'user-1', exp },
+    { provider: 'google', sub: 'user-1', sid: SESSION_ID, exp },
     { issuer: 'lingualoop', audience: 'lingualoop-api', noTimestamp: true },
   );
 
@@ -97,7 +110,7 @@ test('rejects correctly signed tokens without an issued-at claim', async () => {
 test('rejects correctly signed tokens with a lifetime longer than 15 minutes', async () => {
   const iat = Math.floor(Date.now() / 1_000);
   const token = await signRaw(
-    { provider: 'google', sub: 'user-1', iat, exp: iat + 901 },
+    { provider: 'google', sub: 'user-1', sid: SESSION_ID, iat, exp: iat + 901 },
     { issuer: 'lingualoop', audience: 'lingualoop-api' },
   );
 
@@ -106,11 +119,11 @@ test('rejects correctly signed tokens with a lifetime longer than 15 minutes', a
 
 test('rejects tokens with the wrong audience or issuer', async () => {
   const wrongAudience = await signRaw(
-    { provider: 'google', sub: 'user-1' },
+    { provider: 'google', sub: 'user-1', sid: SESSION_ID },
     { issuer: 'lingualoop', audience: 'another-api', expiresIn: 900 },
   );
   const wrongIssuer = await signRaw(
-    { provider: 'google', sub: 'user-1' },
+    { provider: 'google', sub: 'user-1', sid: SESSION_ID },
     { issuer: 'another-service', audience: 'lingualoop-api', expiresIn: 900 },
   );
 
@@ -120,7 +133,7 @@ test('rejects tokens with the wrong audience or issuer', async () => {
 
 test('rejects tokens signed with a non-whitelisted algorithm', async () => {
   const token = await signRaw(
-    { provider: 'google', sub: 'user-1' },
+    { provider: 'google', sub: 'user-1', sid: SESSION_ID },
     { algorithm: 'HS384', issuer: 'lingualoop', audience: 'lingualoop-api', expiresIn: 900 },
   );
 
@@ -142,14 +155,17 @@ test('requires an independent signing key of at least 32 bytes', () => {
 test('rejects invalid provider identifiers and subjects before issuing', async () => {
   const tokens = service();
   const invalidInputs = [
-    { issuer: '', subject: 'user-1' },
-    { issuer: 'provider with spaces', subject: 'user-1' },
-    { issuer: 'google', subject: '' },
-    { issuer: 'google', subject: 'user with spaces' },
-    { issuer: 'google', subject: 'user\nforged' },
-    { issuer: 'google', subject: `user-${'x'.repeat(600)}` },
-    { issuer: 'google', subject: '\ud800' },
-    { issuer: 'google', subject: 'e\u0301' },
+    { issuer: '', subject: 'user-1', sessionId: SESSION_ID },
+    { issuer: 'provider with spaces', subject: 'user-1', sessionId: SESSION_ID },
+    { issuer: 'google', subject: '', sessionId: SESSION_ID },
+    { issuer: 'google', subject: 'user with spaces', sessionId: SESSION_ID },
+    { issuer: 'google', subject: 'user\nforged', sessionId: SESSION_ID },
+    { issuer: 'google', subject: `user-${'x'.repeat(600)}`, sessionId: SESSION_ID },
+    { issuer: 'google', subject: '\ud800', sessionId: SESSION_ID },
+    { issuer: 'google', subject: 'e\u0301', sessionId: SESSION_ID },
+    { issuer: 'google', subject: 'user-1' },
+    { issuer: 'google', subject: 'user-1', sessionId: 'not-a-uuid' },
+    { issuer: 'google', subject: 'user-1', sessionId: '550e8400-e29b-11d4-a716-446655440000' },
   ];
 
   for (const input of invalidInputs) {
@@ -159,10 +175,12 @@ test('rejects invalid provider identifiers and subjects before issuing', async (
 
 test('rejects signed tokens whose provider or subject claims are malformed', async () => {
   for (const payload of [
-    { provider: 'bad provider', sub: 'user-1' },
-    { provider: 'google', sub: 'user with spaces' },
-    { provider: 'google', sub: `user-${'x'.repeat(600)}` },
-    { provider: 'google', sub: '\ud800' },
+    { provider: 'bad provider', sub: 'user-1', sid: SESSION_ID },
+    { provider: 'google', sub: 'user with spaces', sid: SESSION_ID },
+    { provider: 'google', sub: `user-${'x'.repeat(600)}`, sid: SESSION_ID },
+    { provider: 'google', sub: '\ud800', sid: SESSION_ID },
+    { provider: 'google', sub: 'user-1', sid: 'bogus' },
+    { provider: 'google', sub: 'user-1', sid: '550e8400-e29b-11d4-a716-446655440000' },
   ]) {
     const token = await signRaw(payload, {
       issuer: 'lingualoop',

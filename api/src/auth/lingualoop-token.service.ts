@@ -10,21 +10,25 @@ const TOKEN_TTL_SECONDS = 15 * 60;
 const MAX_TOKEN_LENGTH = 8_192;
 const MAX_SUBJECT_BYTES = 512;
 const PROVIDER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BEARER_TOKEN_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const INVALID_TOKEN = new InvalidBearerTokenError();
 
 export interface LinguaLoopIdentity {
   issuer: string;
   subject: string;
+  sessionId: string;
 }
 
 export interface IssueLinguaLoopTokenInput {
   issuer: string;
   subject: string;
+  sessionId: string;
 }
 
 interface LinguaLoopTokenClaims {
   sub?: unknown;
+  sid?: unknown;
   provider?: unknown;
   iat?: unknown;
   exp?: unknown;
@@ -52,12 +56,13 @@ export class LinguaLoopTokenService {
     if (!input || typeof input !== 'object' || Array.isArray(input)) {
       throw new RangeError('A provider issuer and subject are required.');
     }
-    const { issuer, subject } = input;
+    const { issuer, subject, sessionId } = input;
     this.validateIssuer(issuer);
     this.validateSubject(subject);
+    this.validateSessionId(sessionId);
 
     return this.jwtService.signAsync(
-      { provider: issuer },
+      { provider: issuer, sid: sessionId },
       {
         algorithm: 'HS256',
         audience: TOKEN_AUDIENCE,
@@ -94,7 +99,8 @@ export class LinguaLoopTokenService {
       }
       this.validateIssuer(claims.provider);
       this.validateSubject(claims.sub);
-      return { issuer: claims.provider, subject: claims.sub };
+      this.validateSessionId(claims.sid);
+      return { issuer: claims.provider, subject: claims.sub, sessionId: claims.sid };
     } catch {
       throw INVALID_TOKEN;
     }
@@ -103,6 +109,12 @@ export class LinguaLoopTokenService {
   private validateIssuer(issuer: unknown): asserts issuer is string {
     if (typeof issuer !== 'string' || !PROVIDER_PATTERN.test(issuer)) {
       throw new RangeError('issuer must be a stable provider identifier.');
+    }
+  }
+
+  private validateSessionId(sessionId: unknown): asserts sessionId is string {
+    if (typeof sessionId !== 'string' || !SESSION_ID_PATTERN.test(sessionId)) {
+      throw new RangeError('sessionId must be a canonical UUID v4.');
     }
   }
 
