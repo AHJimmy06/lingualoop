@@ -2,6 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const { Client } = require('pg');
+const { runLinguaLoopMigrations } = require('../../dist/db/migrate.js');
 const {
   LanguagePracticeTurnStore,
   LanguagePracticeTurnStoreError,
@@ -14,6 +17,34 @@ const CLIENT_TURN = '323e4567-e89b-42d3-a456-426614174000';
 const TURN = '423e4567-e89b-42d3-a456-426614174000';
 const LEASE = '523e4567-e89b-42d3-a456-426614174000';
 const LEASE_END = '2026-09-24T12:00:30.000Z';
+const FOREIGN_OWNER = '123e4567-e89b-42d3-a456-426614174001';
+const FOREIGN_SESSION = '223e4567-e89b-42d3-a456-426614174001';
+const DISPOSABLE_PASSWORD = 'disposable-postgres-test-password';
+const IMAGE = 'postgres:16-alpine';
+const MIGRATIONS_DIR = path.resolve(__dirname, '../../db/migrations');
+
+function docker(args) {
+  const result = spawnSync('docker', args, { encoding: 'utf8', timeout: 30_000 });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`Disposable PostgreSQL Docker command failed: ${args[0]}`);
+  return result.stdout.trim();
+}
+
+async function waitForPostgres(config) {
+  let lastError;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const client = new Client(config);
+    try {
+      await client.connect();
+      return client;
+    } catch (error) {
+      lastError = error;
+      await client.end().catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+  throw new Error(`Disposable PostgreSQL did not become ready: ${lastError?.message ?? 'timeout'}`);
+}
 
 function fakeQuery(result, error) {
   const calls = [];
@@ -135,6 +166,104 @@ test('replay function casts varchar turn fields to its declared text result type
   assert.match(replay, /existing_turn\.status::TEXT/);
   assert.match(replay, /existing_turn\.failure_code::TEXT/);
   assert.doesNotMatch(replay, /existing_turn\.failure_code\s*[,;]/);
+});
+
+test('completed history query binds both owner and session and rejects invalid UUIDs generically', async () => {
+  const fake = fakeQuery({ rows: [] });
+  assert.deepEqual(await fake.store.getCompletedHistory(OWNER, SESSION), []);
+  assert.deepEqual(fake.calls[0].parameters, [OWNER, SESSION]);
+  assert.match(fake.calls[0].sql, /INNER JOIN lingualoop_language_practice_sessions AS s ON s\.id = t\.session_id/i);
+  assert.match(fake.calls[0].sql, /s\.owner_id = \$1::uuid AND s\.id = \$2::uuid AND t\.status = 'COMPLETED'/i);
+  assert.match(fake.calls[0].sql, /ORDER BY t\.sequence DESC\s+LIMIT 10/i);
+  assert.match(fake.calls[0].sql, /ORDER BY sequence ASC/i);
+  assert.match(fake.calls[0].sql, /LEFT\(t\.transcript, 2000\)/i);
+  assert.match(fake.calls[0].sql, /LEFT\(t\.assistant_response, 2000\)/i);
+  await assert.rejects(fake.store.getCompletedHistory('bad-owner', SESSION), LanguagePracticeTurnStoreError);
+  assert.equal(fake.calls.length, 1);
+});
+
+test('disposable PostgreSQL history is owner-filtered, completed-only, chronological, and bounded', {
+  timeout: 180_000,
+}, async () => {
+  let container;
+  let client;
+  try {
+    container = docker([
+      'run', '--rm', '--detach', '--publish', '127.0.0.1::5432',
+      '--env', `POSTGRES_PASSWORD=${DISPOSABLE_PASSWORD}`,
+      '--env', 'POSTGRES_DB=lingualoop_test', IMAGE,
+    ]);
+    const publishedPort = docker(['port', container, '5432/tcp']).split(':').at(-1);
+    assert.match(publishedPort, /^\d+$/);
+    const config = {
+      host: '127.0.0.1', port: Number(publishedPort), database: 'lingualoop_test',
+      user: 'postgres', password: DISPOSABLE_PASSWORD, connectionTimeoutMillis: 1_000,
+    };
+    client = await waitForPostgres(config);
+    await runLinguaLoopMigrations(client, MIGRATIONS_DIR);
+    await client.end();
+    client = new Client(config);
+    await client.connect();
+
+    await client.query(
+      "INSERT INTO lingualoop_accounts (id, issuer, subject) VALUES ($1, 'google', 'history-owner'), ($2, 'google', 'history-foreign-owner')",
+      [OWNER, FOREIGN_OWNER],
+    );
+    await client.query(
+      "INSERT INTO lingualoop_language_practice_sessions " +
+        "(id, owner_id, level, topic, duration_minutes, expires_at) VALUES " +
+        "($1, $2, 'A1', 'travel', 5, clock_timestamp() + INTERVAL '1 hour'), " +
+        "($3, $4, 'A1', 'travel', 5, clock_timestamp() + INTERVAL '1 hour')",
+      [SESSION, OWNER, FOREIGN_SESSION, FOREIGN_OWNER],
+    );
+
+    for (let sequence = 1; sequence <= 12; sequence += 1) {
+      await client.query(
+        'INSERT INTO lingualoop_language_practice_turns ' +
+          '(id, session_id, client_turn_id, sequence, status, transcript, assistant_response, completed_at) ' +
+          "VALUES ($1, $2, $3, $4, 'COMPLETED', $5, $6, now())",
+        [
+          `423e4567-e89b-42d3-a456-${String(sequence).padStart(12, '0')}`,
+          SESSION,
+          `323e4567-e89b-42d3-a456-${String(sequence).padStart(12, '0')}`,
+          sequence,
+          sequence === 12 ? 'x'.repeat(2_005) : `learner-${sequence}`,
+          sequence === 12 ? 'y'.repeat(2_005) : `assistant-${sequence}`,
+        ],
+      );
+    }
+    await client.query(
+      'INSERT INTO lingualoop_language_practice_turns ' +
+        '(id, session_id, client_turn_id, sequence, status, failure_code) ' +
+        "VALUES ('423e4567-e89b-42d3-a456-000000000013', $1, '323e4567-e89b-42d3-a456-000000000013', 13, 'FAILED', 'test'), " +
+        "('423e4567-e89b-42d3-a456-000000000014', $1, '323e4567-e89b-42d3-a456-000000000014', 14, 'PROCESSING', NULL)",
+      [SESSION],
+    );
+    await client.query(
+      'INSERT INTO lingualoop_language_practice_turns ' +
+        '(id, session_id, client_turn_id, sequence, status, transcript, assistant_response, completed_at) ' +
+        "VALUES ('423e4567-e89b-42d3-a456-000000000015', $1, '323e4567-e89b-42d3-a456-000000000015', 1, 'COMPLETED', 'foreign learner', 'foreign assistant', now())",
+      [FOREIGN_SESSION],
+    );
+
+    const store = new LanguagePracticeTurnStore({ query: (sql, parameters) => client.query(sql, parameters) });
+    const history = await store.getCompletedHistory(OWNER, SESSION);
+    assert.equal(history.length, 20);
+    assert.deepEqual(history.slice(0, 2), [
+      { role: 'user', content: 'learner-3' },
+      { role: 'assistant', content: 'assistant-3' },
+    ]);
+    assert.deepEqual(history.slice(-2), [
+      { role: 'user', content: 'x'.repeat(2_000) },
+      { role: 'assistant', content: 'y'.repeat(2_000) },
+    ]);
+    assert.ok(history.every((entry) => entry.content.length <= 2_000));
+    assert.deepEqual(await store.getCompletedHistory(FOREIGN_OWNER, SESSION), []);
+    assert.deepEqual(await store.getCompletedHistory(OWNER, FOREIGN_SESSION), []);
+  } finally {
+    if (client) await client.end().catch(() => {});
+    if (container) docker(['stop', container]);
+  }
 });
 
 test('migration enforces unique turn identity and sequence, lease expiry and fenced text completion without audio columns', () => {

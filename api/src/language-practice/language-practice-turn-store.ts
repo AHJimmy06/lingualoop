@@ -47,6 +47,20 @@ const COMPLETE_SQL = `
 const FAIL_SQL = `
   SELECT lingualoop_fail_language_practice_turn($1::uuid, $2::uuid, $3::uuid, $4::uuid) AS failed
 `;
+const COMPLETED_HISTORY_SQL = `
+  WITH recent_completed AS (
+    SELECT t.sequence, LEFT(t.transcript, 2000) AS transcript,
+      LEFT(t.assistant_response, 2000) AS assistant_response
+    FROM lingualoop_language_practice_turns AS t
+    INNER JOIN lingualoop_language_practice_sessions AS s ON s.id = t.session_id
+    WHERE s.owner_id = $1::uuid AND s.id = $2::uuid AND t.status = 'COMPLETED'
+    ORDER BY t.sequence DESC
+    LIMIT 10
+  )
+  SELECT transcript, assistant_response
+  FROM recent_completed
+  ORDER BY sequence ASC
+`;
 
 function uuid(value: unknown): asserts value is string {
   if (typeof value !== 'string' || !UUID_PATTERN.test(value)) throw new LanguagePracticeTurnStoreError();
@@ -101,6 +115,17 @@ function lease(value: unknown): asserts value is string {
   uuid(value);
 }
 
+function boundedHistoryText(value: string): string {
+  const clipped = value.slice(0, 2000);
+  return /[\uD800-\uDBFF]$/.test(clipped) ? clipped.slice(0, -1) : clipped;
+}
+
+/** A completed learner/assistant message returned as bounded coaching history. */
+export interface LanguagePracticeHistoryEntry {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 /** Persists turn text only; uploaded audio is never accepted by this boundary. */
 export class LanguagePracticeTurnStore {
   constructor(private readonly executor: QueryExecutor) {
@@ -153,6 +178,30 @@ export class LanguagePracticeTurnStore {
       ]), 1, 1)[0] as { completed?: unknown } | null;
       if (!row || typeof row.completed !== 'boolean') throw new LanguagePracticeTurnStoreError();
       return row.completed;
+    } catch {
+      throw new LanguagePracticeTurnStoreError();
+    }
+  }
+
+  /** Returns this owner's last ten completed turns in chronological learner/assistant order. */
+  async getCompletedHistory(ownerId: string, sessionId: string): Promise<LanguagePracticeHistoryEntry[]> {
+    uuid(ownerId);
+    uuid(sessionId);
+    try {
+      const historyRows = rows(await this.executor.query(COMPLETED_HISTORY_SQL, [ownerId, sessionId]), 0, 10);
+      const history: LanguagePracticeHistoryEntry[] = [];
+      for (const value of historyRows) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new LanguagePracticeTurnStoreError();
+        const row = value as Record<string, unknown>;
+        if (typeof row.transcript !== 'string' || typeof row.assistant_response !== 'string') {
+          throw new LanguagePracticeTurnStoreError();
+        }
+        history.push(
+          { role: 'user', content: boundedHistoryText(row.transcript) },
+          { role: 'assistant', content: boundedHistoryText(row.assistant_response) },
+        );
+      }
+      return history;
     } catch {
       throw new LanguagePracticeTurnStoreError();
     }
