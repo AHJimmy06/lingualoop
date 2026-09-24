@@ -8,10 +8,23 @@ import {
 export interface VerifiedIdentity {
   issuer: string;
   subject: string;
+  sessionId: string;
+}
+
+export interface AuthenticatedIdentity extends VerifiedIdentity {
+  ownerId: string;
 }
 
 export interface BearerTokenVerifier {
   verifyBearerToken(token: string): Promise<VerifiedIdentity>;
+}
+
+export interface IdentityOwnerLookup {
+  findOwnerByIdentity(identity: Pick<VerifiedIdentity, 'issuer' | 'subject'>): Promise<string | null>;
+}
+
+export interface ActiveSessionChecker {
+  isSessionActive(ownerUuid: string, sessionUuid: string, nowMs: number): Promise<boolean>;
 }
 
 export class InvalidBearerTokenError extends Error {
@@ -24,21 +37,32 @@ export class InvalidBearerTokenError extends Error {
 interface AuthenticatedRequest {
   headers?: { authorization?: string | string[] };
   rawHeaders?: string[];
-  verifiedIdentity?: VerifiedIdentity;
+  verifiedIdentity?: AuthenticatedIdentity;
 }
 
 const BEARER_HEADER_PATTERN = /^Bearer ([A-Za-z0-9\-._~+/]+=*)$/i;
+const GOOGLE_ISSUER = 'google';
+const MAX_SUBJECT_BYTES = 512;
+const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 @Injectable()
 export class VerifiedRequestGuard implements CanActivate {
-  constructor(private readonly verifier?: BearerTokenVerifier) {}
+  constructor(
+    private readonly verifier?: BearerTokenVerifier,
+    private readonly ownerLookup?: IdentityOwnerLookup,
+    private readonly sessionChecker?: ActiveSessionChecker,
+    private readonly nowMs: () => number = Date.now,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     delete request.verifiedIdentity;
     const token = this.extractBearerToken(request);
 
-    if (!this.verifier || typeof this.verifier.verifyBearerToken !== 'function') {
+    if (!this.verifier || typeof this.verifier.verifyBearerToken !== 'function' ||
+        !this.ownerLookup || typeof this.ownerLookup.findOwnerByIdentity !== 'function' ||
+        !this.sessionChecker || typeof this.sessionChecker.isSessionActive !== 'function') {
       throw new HttpException('Authentication service unavailable.', 503);
     }
 
@@ -56,7 +80,28 @@ export class VerifiedRequestGuard implements CanActivate {
       throw new HttpException('Authentication service unavailable.', 503);
     }
 
-    request.verifiedIdentity = { issuer: identity.issuer, subject: identity.subject };
+    let ownerId: unknown;
+    try {
+      ownerId = await this.ownerLookup.findOwnerByIdentity({ issuer: identity.issuer, subject: identity.subject });
+    } catch {
+      throw new HttpException('Authentication service unavailable.', 503);
+    }
+    if (ownerId === null) throw new HttpException('Unauthorized.', 401);
+    if (typeof ownerId !== 'string' || !UUID_PATTERN.test(ownerId)) {
+      throw new HttpException('Authentication service unavailable.', 503);
+    }
+
+    const nowMs = this.nowMs();
+    let active: unknown;
+    try {
+      active = await this.sessionChecker.isSessionActive(ownerId, identity.sessionId, nowMs);
+    } catch {
+      throw new HttpException('Authentication service unavailable.', 503);
+    }
+    if (typeof active !== 'boolean') throw new HttpException('Authentication service unavailable.', 503);
+    if (!active) throw new HttpException('Unauthorized.', 401);
+
+    request.verifiedIdentity = { ...identity, ownerId };
     return true;
   }
 
@@ -81,9 +126,13 @@ export class VerifiedRequestGuard implements CanActivate {
   }
 
   private isVerifiedIdentity(value: unknown): value is VerifiedIdentity {
-    if (typeof value !== 'object' || value === null) return false;
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
     const identity = value as Record<string, unknown>;
-    return typeof identity.issuer === 'string' && identity.issuer.trim().length > 0 &&
-      typeof identity.subject === 'string' && identity.subject.trim().length > 0;
+    const { issuer, subject, sessionId } = identity;
+    return issuer === GOOGLE_ISSUER && typeof subject === 'string' && subject.length > 0 &&
+      Buffer.byteLength(subject, 'utf8') <= MAX_SUBJECT_BYTES &&
+      Buffer.from(subject, 'utf8').toString('utf8') === subject && subject.normalize('NFC') === subject &&
+      !/[\p{White_Space}\p{Cc}\p{Cf}]/u.test(subject) &&
+      typeof sessionId === 'string' && UUID_V4_PATTERN.test(sessionId);
   }
 }
