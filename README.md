@@ -19,11 +19,11 @@ Each app is an independent pnpm project with its own `pnpm-lock.yaml`. Build che
 
 ## Authentication foundation and limitations
 
-The API contains an OAuth-state service, a verified-request guard, a LinguaLoop JWT issuer/verifier, and a bounded Google ID-token identity verifier. These are foundation components only: the Google verifier is **not wired to an OAuth callback or login endpoint**, and no real Google application registration or credentials are assumed. Auth stores and migrations exist, but there is no application database wiring, email-based ownership, session flow, or database-backed account mapping.
+The API contains an OAuth-state service, a verified-request guard, a LinguaLoop JWT issuer/verifier, a bounded Google ID-token identity verifier, and PostgreSQL-backed identity, OAuth-state, session, and refresh stores. Nest registers all four stores against the same Nest-owned PostgreSQL query executor; constructing the providers performs no database I/O. The Google verifier is **not wired to an OAuth callback or login endpoint**, no public auth route exists, and no Google or JWT credentials are configured. Store methods are available for later auth-flow integration; this wiring alone does not establish an account/session flow.
 
 NousAI is stopped and is not an identity provider for LinguaLoop. The retained obsolete NousAI profile-introspection client/test are historical code, not a working login or handoff; they do not establish an authenticated LinguaLoop session. No token transfer from a NousAI browser session is implemented.
 
-Google is the only planned login provider; Microsoft login is out of scope. The existing Google OAuth application registration may be reused after adding an exact LinguaLoop callback URL and provisioning its client credentials explicitly for LinguaLoop. The callback must validate one-time state and invoke the Google verifier. Do not copy NousAI's `.env`, signing secret, JWTs, database, schema, users, or data. Session/account and auth-store wiring are still needed; no old data is migrated or removed.
+Google is the only planned login provider; Microsoft login is out of scope. The existing Google OAuth application registration may be reused after adding an exact LinguaLoop callback URL and provisioning its client credentials explicitly for LinguaLoop. The callback must validate one-time state and invoke the Google verifier. Do not copy NousAI's `.env`, signing secret, JWTs, database, schema, users, or data. Auth-store providers are wired to the LinguaLoop database adapter, but the callback, account/session flow, and independently provisioned credentials are still needed; no old data is migrated or removed.
 
 ## Configuration inventory (names only)
 
@@ -81,7 +81,7 @@ docker run --rm --network lingualoop-postgres-net \
   -w /app node:24-bookworm-slim node dist/db/migrate.js
 ```
 
-The runner verifies the SHA-256 checksums in `lingualoop_schema_migrations` and applies exactly `001_owner_identity.sql`, `002_oauth_state.sql`, `003_auth_sessions.sql`, and `004_refresh_rotation.sql`. An initial empty database reports `4 applied`; an unchanged repeat reports `0 applied`. The CLI is not run by API/Nest startup. The Nest runtime uses the shared PostgreSQL query executor for readiness only; authentication and login remain unwired.
+The runner verifies the SHA-256 checksums in `lingualoop_schema_migrations` and applies exactly `001_owner_identity.sql`, `002_oauth_state.sql`, `003_auth_sessions.sql`, and `004_refresh_rotation.sql`. An initial empty database reports `4 applied`; an unchanged repeat reports `0 applied`. The CLI is not run by API/Nest startup. The Nest runtime uses one shared PostgreSQL query executor for readiness and the registered auth-store providers. Store construction does not query PostgreSQL; only actual store operations do. Authentication and login remain unwired.
 
 For scoped local access after the container is running, open `psql` inside it:
 
@@ -97,4 +97,4 @@ docker compose -p lingualoop -f compose.postgres.yml down
 
 ## Not included
 
-No wired login/callback, auth-store injection, Redis, session authorization, speech processing, coaching, deployment configuration, or production hardening is present. This is a shell for independently reviewed work units, not a deployable application.
+No wired login/callback, public auth route, Redis, session authorization, speech processing, coaching, deployment configuration, or production hardening is present. Auth-store injection is provider composition only; it does not perform store operations at startup. This is a shell for independently reviewed work units, not a deployable application.
