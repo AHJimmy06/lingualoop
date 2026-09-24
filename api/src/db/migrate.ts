@@ -11,6 +11,7 @@ const MAX_MIGRATION_BYTES = 64 * 1024;
 const REQUIRED_MIGRATIONS = [
   '001_owner_identity.sql', '002_oauth_state.sql',
   '003_auth_sessions.sql', '004_refresh_rotation.sql',
+  '005_language_practice_sessions.sql',
 ];
 
 export interface MigrationClient {
