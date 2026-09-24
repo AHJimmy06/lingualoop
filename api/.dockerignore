@@ -1,0 +1,7 @@
+.git
+node_modules
+dist
+test
+.env
+.env.*
+src/auth/nousai-identity.service.ts

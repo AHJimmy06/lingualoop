@@ -7,11 +7,13 @@ LinguaLoop is an independent starting point for a language-practice application.
 Use a current Node.js version compatible with the source project (`^20.19.0 || >=22.12.0`) and pnpm.
 
 ```sh
-cd api && pnpm install && pnpm dev
+cd api && pnpm install && PORT=5000 pnpm dev
 cd web && pnpm install && pnpm dev
 ```
 
-The API listens on `PORT`, default `3400`, and exposes `GET /health`. The web dev server defaults to `5175`; requests under `/api` are proxied to the API, with `/api/health` forwarded to `/health`.
+The API exposes `GET /health`; when run locally, set `PORT=5000` to match the web proxy (the API's standalone default remains `3400`). The Vite dev server binds to `127.0.0.1:5001` and proxies `/api` to `http://127.0.0.1:5000`, removing the `/api` prefix (`/api/health` reaches `/health`).
+
+An API container image can be built with `docker build -t lingualoop-api ./api`. The Compose API service builds from that same `api/` context, listens on container port `5000`, and publishes it only on host loopback port `5000`. Its healthcheck makes an HTTP GET to `/health` using Node's built-in `fetch`. The API shares PostgreSQL's private Compose network, but this packaging slice does not connect it to PostgreSQL, mount the database password, or configure login. PostgreSQL has no published host port.
 
 Each app is an independent pnpm project with its own `pnpm-lock.yaml`. Build checks do not establish any Language Practice functionality or deployment readiness.
 
@@ -53,11 +55,19 @@ fi
 openssl rand -hex 32 > "$secret_file"
 ```
 
-Start PostgreSQL (the password is read from the host file and is never printed):
+Start PostgreSQL only (the password is read from the host file and is never printed):
 
 ```sh
-LINGUALOOP_DB_PASSWORD_FILE="$HOME/.local/share/lingualoop/postgres/password" docker compose -p lingualoop -f compose.postgres.yml up -d
+LINGUALOOP_DB_PASSWORD_FILE="$HOME/.local/share/lingualoop/postgres/password" docker compose -p lingualoop -f compose.postgres.yml up -d postgres
 ```
+
+To additionally build and start the API container on the private network, run:
+
+```sh
+LINGUALOOP_DB_PASSWORD_FILE="$HOME/.local/share/lingualoop/postgres/password" docker compose -p lingualoop -f compose.postgres.yml up -d --build api
+```
+
+Compose publishes only the API on `127.0.0.1:5000`; PostgreSQL remains private. The API's `/health` reports process health only, not database connectivity. The Vite server can then reach it through `/api` on port `5001`.
 
 ### Apply database migrations
 
