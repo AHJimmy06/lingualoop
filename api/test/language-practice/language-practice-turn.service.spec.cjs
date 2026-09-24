@@ -4,6 +4,7 @@ const {
   LanguagePracticeTurnService,
   PracticeTurnUnavailableError,
 } = require('../../dist/language-practice/language-practice-turn.service.js');
+const { LanguagePracticeTurnAdmissionError } = require('../../dist/language-practice/language-practice-turn-store.js');
 
 const OWNER = '123e4567-e89b-42d3-a456-426614174000';
 const SESSION = '223e4567-e89b-42d3-a456-426614174000';
@@ -159,10 +160,21 @@ test('post-admission failures call fail once and expose only generic unavailable
   }
 });
 
-test('reserve failure does not mark unadmitted turn failed', async () => {
+test('reserve failure does not mark unadmitted turn failed and preserves admission outcomes', async () => {
   const { service, calls, ports } = fixture();
   ports.turnStore.reserveTurn = async () => { throw new Error('store detail'); };
   await assert.rejects(service.processTurn(OWNER, SESSION, CLIENT, audio()), PracticeTurnUnavailableError);
+  assert.equal(calls.fail.length, 0);
+  assert.equal(calls.coach.length, 0);
+
+  for (const reason of ['not_found', 'session_expired', 'turn_in_progress']) {
+    ports.turnStore.reserveTurn = async () => { throw new LanguagePracticeTurnAdmissionError(reason); };
+    await assert.rejects(service.processTurn(OWNER, SESSION, CLIENT, audio()), (error) => {
+      assert.ok(error instanceof LanguagePracticeTurnAdmissionError);
+      assert.equal(error.reason, reason);
+      return true;
+    });
+  }
   assert.equal(calls.fail.length, 0);
   assert.equal(calls.coach.length, 0);
 });

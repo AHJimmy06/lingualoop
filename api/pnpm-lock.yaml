@@ -26,6 +26,9 @@ importers:
       openai:
         specifier: 6.25.0
         version: 6.25.0
+      multer:
+        specifier: 2.2.0
+        version: 2.2.0
       pg:
         specifier: 8.16.3
         version: 8.16.3

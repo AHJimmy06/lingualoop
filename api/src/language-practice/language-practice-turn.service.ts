@@ -1,4 +1,5 @@
 import type { CoachPromptInput } from './coach-prompt';
+import { LanguagePracticeTurnAdmissionError } from './language-practice-turn-store';
 import type { CoachResult } from './coach-result';
 import type { LanguagePracticeLevel, LanguagePracticeTopic } from './language-practice-session-store';
 
@@ -129,7 +130,8 @@ export class LanguagePracticeTurnService {
           completedTurn.transcript !== transcript || completedTurn.assistantResponse !== coaching.assistantResponse ||
           typeof completedTurn.completedAt !== 'string' || completedTurn.completedAt.length === 0) throw new Error();
       return { turn: completedTurn, audioWav: wav };
-    } catch {
+    } catch (error) {
+      if (error instanceof LanguagePracticeTurnAdmissionError) throw error;
       // Once completion committed, a failed authoritative reread must not attempt to fail/charge the turn again.
       if (admitted?.leaseToken && !completionCommitted) {
         try {
