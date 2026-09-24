@@ -28,6 +28,9 @@ services:
     restart: "no"
     environment:
       PORT: "5000"
+      LINGUALOOP_DB_PASSWORD_FILE: /run/secrets/pg_password
+    secrets:
+      - pg_password
     ports:
       - "127.0.0.1:5000:5000"
     networks:

@@ -7,6 +7,7 @@ const {
   loadLinguaLoopPostgresConfig,
   LinguaLoopDatabaseConfigurationError,
   LinguaLoopDatabaseError,
+  LinguaLoopPostgresProvider,
 } = require('../../dist/db/postgres.js');
 
 const PASSWORD = 'a'.repeat(64);
@@ -129,4 +130,21 @@ test('owned pool close is idempotent and prevents later queries', async () => {
   await executor.close();
   await executor.close();
   await assert.rejects(executor.query('SELECT 1', []), LinguaLoopDatabaseError);
+});
+
+test('Nest provider delegates queries and closes its owned executor on module shutdown', async () => {
+  const calls = [];
+  let closeCount = 0;
+  const provider = new LinguaLoopPostgresProvider({
+    async query(sql, parameters) {
+      calls.push({ sql, parameters });
+      return { rows: [{ value: 1 }] };
+    },
+    async close() { closeCount += 1; },
+  });
+
+  assert.deepEqual(await provider.query('SELECT 1', []), { rows: [{ value: 1 }] });
+  assert.deepEqual(calls, [{ sql: 'SELECT 1', parameters: [] }]);
+  await provider.onModuleDestroy();
+  assert.equal(closeCount, 1);
 });

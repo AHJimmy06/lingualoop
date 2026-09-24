@@ -107,6 +107,8 @@ export function createLinguaLoopQueryExecutor(
         database: DATABASE_NAME,
         user: DATABASE_USER,
         password: config.password,
+        connectionTimeoutMillis: 3_000,
+        query_timeout: 5_000,
       });
       ownedPool.on('error', () => {
         // pg removes failed idle clients; consume the event without exposing raw errors.
@@ -141,4 +143,18 @@ export function createLinguaLoopQueryExecutor(
       }
     },
   };
+}
+
+export const LINGUALOOP_QUERY_EXECUTOR = Symbol('LINGUALOOP_QUERY_EXECUTOR');
+
+export class LinguaLoopPostgresProvider implements QueryExecutor {
+  constructor(private readonly executor: QueryExecutor & { close(): Promise<void> }) {}
+
+  query(sql: string, parameters: readonly unknown[]): Promise<QueryResult> {
+    return this.executor.query(sql, parameters);
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.executor.close();
+  }
 }
