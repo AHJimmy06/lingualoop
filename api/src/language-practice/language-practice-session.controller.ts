@@ -6,7 +6,8 @@ import {
   LANGUAGE_PRACTICE_TOPICS,
   LanguagePracticeSessionStore,
 } from './language-practice-session-store';
-import { LANGUAGE_PRACTICE_SESSION_STORE } from './language-practice-session.providers';
+import { LANGUAGE_PRACTICE_SESSION_STORE, LANGUAGE_PRACTICE_TURN_STORE } from './language-practice-session.providers';
+import { LanguagePracticeTurnStore } from './language-practice-turn-store';
 
 const INPUT_LANGUAGE = { code: 'en', label: 'English' };
 const OUTPUT_LANGUAGES = [
@@ -30,12 +31,14 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 type VerifiedRequest = { verifiedIdentity?: { ownerId: string } };
 
 type SessionStore = Pick<LanguagePracticeSessionStore, 'getSession'>;
+type TurnStore = Pick<LanguagePracticeTurnStore, 'listCompletedTurns'>;
 
 @Controller('language-practice')
 @UseGuards(ConfiguredVerifiedRequestGuard)
 export class LanguagePracticeSessionController {
   constructor(
     @Inject(LANGUAGE_PRACTICE_SESSION_STORE) private readonly sessions: SessionStore,
+    @Inject(LANGUAGE_PRACTICE_TURN_STORE) private readonly turns: TurnStore,
   ) {}
 
   @Get('options')
@@ -65,6 +68,12 @@ export class LanguagePracticeSessionController {
       throw new HttpException('Language practice session is unavailable.', 503);
     }
     if (!session) throw new HttpException('Not found.', 404);
-    return { ...session, turns: [] };
+    let turns;
+    try {
+      turns = await this.turns.listCompletedTurns(request.verifiedIdentity.ownerId, sessionId);
+    } catch {
+      throw new HttpException('Language practice session is unavailable.', 503);
+    }
+    return { ...session, turns };
   }
 }

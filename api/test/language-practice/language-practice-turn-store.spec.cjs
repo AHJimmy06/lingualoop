@@ -182,6 +182,27 @@ test('completed history query binds both owner and session and rejects invalid U
   assert.equal(fake.calls.length, 1);
 });
 
+test('completed turn listing binds owner and session and rejects malformed identifiers generically', async () => {
+  const completedAt = '2026-09-24T12:00:30.000Z';
+  const fake = fakeQuery({ rows: [{ sequence: 1, transcript: 'hello', assistant_response: 'Welcome.', completed_at: completedAt }] });
+  assert.deepEqual(await fake.store.listCompletedTurns(OWNER, SESSION), [
+    { sequence: 1, transcript: 'hello', assistantResponse: 'Welcome.', completedAt },
+  ]);
+  assert.deepEqual(fake.calls[0].parameters, [OWNER, SESSION]);
+  assert.match(fake.calls[0].sql, /INNER JOIN lingualoop_language_practice_sessions AS s ON s\.id = t\.session_id/i);
+  assert.match(fake.calls[0].sql, /s\.owner_id = \$1::uuid AND s\.id = \$2::uuid AND t\.status = 'COMPLETED'/i);
+  assert.match(fake.calls[0].sql, /ORDER BY t\.sequence DESC\s+LIMIT 256/i);
+  assert.match(fake.calls[0].sql, /ORDER BY sequence ASC/i);
+  assert.match(fake.calls[0].sql, /LEFT\(t\.transcript, 2000\)/i);
+  assert.match(fake.calls[0].sql, /LEFT\(t\.assistant_response, 2000\)/i);
+  await assert.rejects(fake.store.listCompletedTurns('bad-owner', SESSION), LanguagePracticeTurnStoreError);
+  const malformedTimestamp = fakeQuery({ rows: [{ sequence: 1, transcript: 'hello', assistant_response: 'Welcome.', completed_at: 'invalid' }] });
+  await assert.rejects(malformedTimestamp.store.listCompletedTurns(OWNER, SESSION), LanguagePracticeTurnStoreError);
+  const oversized = fakeQuery({ rows: Array.from({ length: 257 }, () => ({})) });
+  await assert.rejects(oversized.store.listCompletedTurns(OWNER, SESSION), LanguagePracticeTurnStoreError);
+  assert.equal(fake.calls.length, 1);
+});
+
 test('disposable PostgreSQL history is owner-filtered, completed-only, chronological, and bounded', {
   timeout: 180_000,
 }, async () => {
@@ -217,7 +238,7 @@ test('disposable PostgreSQL history is owner-filtered, completed-only, chronolog
       [SESSION, OWNER, FOREIGN_SESSION, FOREIGN_OWNER],
     );
 
-    for (let sequence = 1; sequence <= 12; sequence += 1) {
+    for (let sequence = 1; sequence <= 260; sequence += 1) {
       await client.query(
         'INSERT INTO lingualoop_language_practice_turns ' +
           '(id, session_id, client_turn_id, sequence, status, transcript, assistant_response, completed_at) ' +
@@ -227,31 +248,41 @@ test('disposable PostgreSQL history is owner-filtered, completed-only, chronolog
           SESSION,
           `323e4567-e89b-42d3-a456-${String(sequence).padStart(12, '0')}`,
           sequence,
-          sequence === 12 ? 'x'.repeat(2_005) : `learner-${sequence}`,
-          sequence === 12 ? 'y'.repeat(2_005) : `assistant-${sequence}`,
+          sequence === 260 ? 'x'.repeat(2_005) : `learner-${sequence}`,
+          sequence === 260 ? 'y'.repeat(2_005) : `assistant-${sequence}`,
         ],
       );
     }
     await client.query(
       'INSERT INTO lingualoop_language_practice_turns ' +
         '(id, session_id, client_turn_id, sequence, status, failure_code) ' +
-        "VALUES ('423e4567-e89b-42d3-a456-000000000013', $1, '323e4567-e89b-42d3-a456-000000000013', 13, 'FAILED', 'test'), " +
-        "('423e4567-e89b-42d3-a456-000000000014', $1, '323e4567-e89b-42d3-a456-000000000014', 14, 'PROCESSING', NULL)",
+        "VALUES ('423e4567-e89b-42d3-a456-000000000261', $1, '323e4567-e89b-42d3-a456-000000000261', 261, 'FAILED', 'test'), " +
+        "('423e4567-e89b-42d3-a456-000000000262', $1, '323e4567-e89b-42d3-a456-000000000262', 262, 'PROCESSING', NULL)",
       [SESSION],
     );
     await client.query(
       'INSERT INTO lingualoop_language_practice_turns ' +
         '(id, session_id, client_turn_id, sequence, status, transcript, assistant_response, completed_at) ' +
-        "VALUES ('423e4567-e89b-42d3-a456-000000000015', $1, '323e4567-e89b-42d3-a456-000000000015', 1, 'COMPLETED', 'foreign learner', 'foreign assistant', now())",
+        "VALUES ('423e4567-e89b-42d3-a456-000000000263', $1, '323e4567-e89b-42d3-a456-000000000263', 1, 'COMPLETED', 'foreign learner', 'foreign assistant', now())",
       [FOREIGN_SESSION],
     );
 
     const store = new LanguagePracticeTurnStore({ query: (sql, parameters) => client.query(sql, parameters) });
+    const listed = await store.listCompletedTurns(OWNER, SESSION);
+    assert.equal(listed.length, 256);
+    assert.equal(listed[0].sequence, 5);
+    assert.equal(listed.at(-1).sequence, 260);
+    assert.equal(listed.at(-1).transcript.length, 2_000);
+    assert.equal(listed.at(-1).assistantResponse.length, 2_000);
+    assert.match(listed[0].completedAt, /^\d{4}-\d\d-/);
+    assert.deepEqual(await store.listCompletedTurns(FOREIGN_OWNER, SESSION), []);
+    assert.deepEqual(await store.listCompletedTurns(OWNER, FOREIGN_SESSION), []);
+
     const history = await store.getCompletedHistory(OWNER, SESSION);
     assert.equal(history.length, 20);
     assert.deepEqual(history.slice(0, 2), [
-      { role: 'user', content: 'learner-3' },
-      { role: 'assistant', content: 'assistant-3' },
+      { role: 'user', content: 'learner-251' },
+      { role: 'assistant', content: 'assistant-251' },
     ]);
     assert.deepEqual(history.slice(-2), [
       { role: 'user', content: 'x'.repeat(2_000) },

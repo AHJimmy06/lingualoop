@@ -47,6 +47,20 @@ const COMPLETE_SQL = `
 const FAIL_SQL = `
   SELECT lingualoop_fail_language_practice_turn($1::uuid, $2::uuid, $3::uuid, $4::uuid) AS failed
 `;
+const COMPLETED_TURNS_SQL = `
+  WITH recent_completed AS (
+    SELECT t.sequence, LEFT(t.transcript, 2000) AS transcript,
+      LEFT(t.assistant_response, 2000) AS assistant_response, t.completed_at
+    FROM lingualoop_language_practice_turns AS t
+    INNER JOIN lingualoop_language_practice_sessions AS s ON s.id = t.session_id
+    WHERE s.owner_id = $1::uuid AND s.id = $2::uuid AND t.status = 'COMPLETED'
+    ORDER BY t.sequence DESC
+    LIMIT 256
+  )
+  SELECT sequence, transcript, assistant_response, completed_at
+  FROM recent_completed
+  ORDER BY sequence ASC
+`;
 const COMPLETED_HISTORY_SQL = `
   WITH recent_completed AS (
     SELECT t.sequence, LEFT(t.transcript, 2000) AS transcript,
@@ -120,6 +134,14 @@ function boundedHistoryText(value: string): string {
   return /[\uD800-\uDBFF]$/.test(clipped) ? clipped.slice(0, -1) : clipped;
 }
 
+/** A completed turn returned in the protected session detail response. */
+export interface LanguagePracticeCompletedTurn {
+  sequence: number;
+  transcript: string;
+  assistantResponse: string;
+  completedAt: string;
+}
+
 /** A completed learner/assistant message returned as bounded coaching history. */
 export interface LanguagePracticeHistoryEntry {
   role: 'user' | 'assistant';
@@ -178,6 +200,33 @@ export class LanguagePracticeTurnStore {
       ]), 1, 1)[0] as { completed?: unknown } | null;
       if (!row || typeof row.completed !== 'boolean') throw new LanguagePracticeTurnStoreError();
       return row.completed;
+    } catch {
+      throw new LanguagePracticeTurnStoreError();
+    }
+  }
+
+  /** Returns at most 256 latest completed turns in chronological order. */
+  async listCompletedTurns(ownerId: string, sessionId: string): Promise<LanguagePracticeCompletedTurn[]> {
+    uuid(ownerId);
+    uuid(sessionId);
+    try {
+      const completedRows = rows(await this.executor.query(COMPLETED_TURNS_SQL, [ownerId, sessionId]), 0, 256);
+      return completedRows.map((value) => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new LanguagePracticeTurnStoreError();
+        const row = value as Record<string, unknown>;
+        if (!Number.isSafeInteger(row.sequence) || (row.sequence as number) < 1 ||
+            typeof row.transcript !== 'string' || typeof row.assistant_response !== 'string') {
+          throw new LanguagePracticeTurnStoreError();
+        }
+        const completedAt = nullableTimestamp(row.completed_at);
+        if (completedAt === null) throw new LanguagePracticeTurnStoreError();
+        return {
+          sequence: row.sequence as number,
+          transcript: boundedHistoryText(row.transcript),
+          assistantResponse: boundedHistoryText(row.assistant_response),
+          completedAt,
+        };
+      });
     } catch {
       throw new LanguagePracticeTurnStoreError();
     }
