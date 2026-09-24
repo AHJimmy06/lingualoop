@@ -1,5 +1,9 @@
 export type RefreshResult = 'authenticated' | 'no-session' | 'unavailable';
 
+export type TranscriptionResult =
+  | { ok: true; transcript: string }
+  | { ok: false; error: 'too-large' | 'unsupported' | 'rate-limited' | 'unavailable' | 'failed' };
+
 export class AuthSession {
   private accessToken: string | null = null;
   private refreshInFlight: Promise<RefreshResult> | null = null;
@@ -17,6 +21,15 @@ export class AuthSession {
       this.refreshInFlight = null;
     });
     return this.refreshInFlight;
+  }
+
+  async transcribe(audio: Blob): Promise<TranscriptionResult> {
+    let result = await this.sendTranscription(audio);
+    if (result === 'unauthorized') {
+      if ((await this.refresh()) !== 'authenticated') return { ok: false, error: 'failed' };
+      result = await this.sendTranscription(audio);
+    }
+    return result === 'unauthorized' ? { ok: false, error: 'failed' } : result;
   }
 
   async logout(): Promise<boolean> {
@@ -54,6 +67,41 @@ export class AuthSession {
       return 'authenticated';
     } catch {
       return 'unavailable';
+    }
+  }
+
+  private async sendTranscription(audio: Blob): Promise<TranscriptionResult | 'unauthorized'> {
+    if (!this.accessToken) return 'unauthorized';
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 90_000);
+    try {
+      const response = await this.request('/api/practice/transcribe', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          'Content-Type': audio.type,
+        },
+        body: audio,
+        signal: controller.signal,
+      });
+      if (response.status === 401) return 'unauthorized';
+      if (response.status === 413) return { ok: false, error: 'too-large' };
+      if (response.status === 415) return { ok: false, error: 'unsupported' };
+      if (response.status === 429) return { ok: false, error: 'rate-limited' };
+      if (response.status === 503) return { ok: false, error: 'unavailable' };
+      if (response.status !== 200) return { ok: false, error: 'failed' };
+
+      const body: unknown = await response.json();
+      if (typeof body === 'object' && body !== null && 'transcript' in body &&
+          typeof body.transcript === 'string' && body.transcript.trim().length > 0) {
+        return { ok: true, transcript: body.transcript };
+      }
+      return { ok: false, error: 'failed' };
+    } catch {
+      return { ok: false, error: 'unavailable' };
+    } finally {
+      clearTimeout(timeout);
     }
   }
 

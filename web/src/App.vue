@@ -1,13 +1,26 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { AuthSession, type RefreshResult } from './auth-session';
+import { MAX_AUDIO_BYTES, MAX_RECORDING_MS, selectSupportedAudioMimeType, transcriptionErrorMessage } from './practice-audio';
 
 const session = new AuthSession();
 const state = ref<'checking' | 'signed-out' | 'authenticated' | 'unavailable'>('checking');
 const busy = ref(false);
 const message = ref('Checking for an existing LinguaLoop session…');
+const recording = ref(false);
+const starting = ref(false);
+const stopping = ref(false);
+const transcribing = ref(false);
+const audioMessage = ref('');
+const transcript = ref('');
+let recorder: MediaRecorder | null = null;
+let stream: MediaStream | null = null;
+let recordingTimer: ReturnType<typeof setTimeout> | null = null;
+let captureSequence = 0;
+let discardCapture = false;
 
 function showRefreshResult(result: RefreshResult): void {
+  if (state.value === 'authenticated' && result !== 'authenticated') discardPractice();
   if (result === 'authenticated') {
     state.value = 'authenticated';
     message.value = 'You are signed in. Your access token stays in memory for this page only.';
@@ -21,13 +34,139 @@ function showRefreshResult(result: RefreshResult): void {
 }
 
 async function checkSession(): Promise<void> {
+  if (state.value === 'authenticated') discardPractice();
   busy.value = true;
   message.value = 'Checking your session…';
   showRefreshResult(await session.refresh());
   busy.value = false;
 }
 
+function discardPractice(): void {
+  captureSequence++;
+  discardCapture = true;
+  starting.value = false;
+  stopping.value = false;
+  transcribing.value = false;
+  transcript.value = '';
+  audioMessage.value = '';
+  if (recorder && recorder.state !== 'inactive') recorder.stop();
+  releaseMicrophone();
+}
+
+function releaseMicrophone(): void {
+  if (recordingTimer) clearTimeout(recordingTimer);
+  recordingTimer = null;
+  stream?.getTracks().forEach((track) => track.stop());
+  stream = null;
+  recording.value = false;
+}
+
+function stopRecording(): void {
+  const activeRecorder = recorder;
+  if (!activeRecorder || activeRecorder.state === 'inactive' || stopping.value) return;
+  stopping.value = true;
+  activeRecorder.stop();
+}
+
+async function startRecording(): Promise<void> {
+  if (starting.value || recorder || recording.value || transcribing.value) return;
+  const requestSequence = ++captureSequence;
+  discardCapture = false;
+  transcript.value = '';
+  audioMessage.value = '';
+  const mimeType = selectSupportedAudioMimeType();
+  if (!mimeType) {
+    audioMessage.value = 'This browser does not support a compatible audio recording format.';
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+    audioMessage.value = 'Microphone recording is not supported in this browser.';
+    return;
+  }
+
+  starting.value = true;
+  try {
+    const acquiredStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    starting.value = false;
+    if (requestSequence !== captureSequence || state.value !== 'authenticated') {
+      acquiredStream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    stream = acquiredStream;
+    const chunks: BlobPart[] = [];
+    let capturedBytes = 0;
+    let exceededLimit = false;
+    const activeRecorder = new MediaRecorder(stream, { mimeType });
+    recorder = activeRecorder;
+    activeRecorder.addEventListener('dataavailable', (event) => {
+      if (event.data.size === 0 || exceededLimit) return;
+      capturedBytes += event.data.size;
+      if (capturedBytes > MAX_AUDIO_BYTES) {
+        exceededLimit = true;
+        chunks.length = 0;
+        stopping.value = true;
+        if (activeRecorder.state !== 'inactive') activeRecorder.stop();
+        return;
+      }
+      chunks.push(event.data);
+    });
+    activeRecorder.addEventListener('error', () => {
+      discardCapture = true;
+      captureSequence++;
+      transcribing.value = false;
+      releaseMicrophone();
+      recorder = null;
+      stopping.value = false;
+      audioMessage.value = 'The browser could not record audio. Check microphone permission and try again.';
+    }, { once: true });
+    activeRecorder.addEventListener('stop', () => {
+      releaseMicrophone();
+      recorder = null;
+      stopping.value = false;
+      if (discardCapture) return;
+      if (exceededLimit) {
+        audioMessage.value = 'This recording is too large. Keep it under 2 MiB and try again.';
+        return;
+      }
+      const audio = new Blob(chunks, { type: mimeType });
+      if (audio.size === 0) {
+        audioMessage.value = 'No audio was captured. Try recording again.';
+        return;
+      }
+      if (audio.size > MAX_AUDIO_BYTES) {
+        audioMessage.value = 'This recording is too large. Keep it under 2 MiB and try again.';
+        return;
+      }
+      void uploadRecording(audio);
+    }, { once: true });
+    activeRecorder.start(1000);
+    recording.value = true;
+    recordingTimer = setTimeout(() => { void stopRecording(); }, MAX_RECORDING_MS);
+  } catch {
+    starting.value = false;
+    releaseMicrophone();
+    recorder = null;
+    audioMessage.value = 'Microphone access was denied or unavailable. Allow microphone access and try again.';
+  }
+}
+
+async function uploadRecording(audio: Blob): Promise<void> {
+  const sequence = ++captureSequence;
+  transcribing.value = true;
+  audioMessage.value = 'Sending audio for transcription…';
+  const result = await session.transcribe(audio);
+  if (sequence !== captureSequence) return;
+  transcribing.value = false;
+  if (result.ok) {
+    transcript.value = result.transcript;
+    audioMessage.value = 'Transcription complete.';
+  } else {
+    audioMessage.value = transcriptionErrorMessage(result.error);
+  }
+}
+
 async function logout(): Promise<void> {
+  discardPractice();
   busy.value = true;
   message.value = 'Requesting server-side sign-out…';
   const revoked = await session.logout();
@@ -45,6 +184,10 @@ async function logout(): Promise<void> {
 
 onMounted(() => {
   void checkSession();
+});
+
+onUnmounted(() => {
+  discardPractice();
 });
 </script>
 
@@ -73,7 +216,25 @@ onMounted(() => {
           Log out
         </button>
       </div>
-      <p class="note">Google sign-in opens in this tab. Practice and profile details are not available yet.</p>
+      <section v-if="state === 'authenticated'" class="practice-card" aria-labelledby="practice-heading">
+        <h2 id="practice-heading">Speak a phrase</h2>
+        <p>Recording starts only when you choose Start. Audio is sent for transcription when you stop.</p>
+        <div class="actions">
+          <button v-if="!recording" type="button" :disabled="starting || transcribing" @click="startRecording">
+            {{ starting ? 'Waiting for microphone…' : 'Start recording' }}
+          </button>
+          <button v-else type="button" class="secondary" :disabled="stopping" @click="stopRecording">
+            {{ stopping ? 'Finishing recording…' : 'Stop and transcribe' }}
+          </button>
+        </div>
+        <p v-if="recording" class="note" role="status">Recording… It will stop automatically after 20 seconds.</p>
+        <p v-if="audioMessage" class="note" role="status" aria-live="polite">{{ audioMessage }}</p>
+        <div v-if="transcript" class="transcript" aria-live="polite">
+          <h3>Transcript</h3>
+          <p>{{ transcript }}</p>
+        </div>
+      </section>
+      <p class="note">Google sign-in opens in this tab. Audio is not saved; no coaching or speech playback is included.</p>
     </section>
   </main>
 </template>
@@ -132,6 +293,35 @@ h1 {
   border-radius: 1rem;
   background: #fff;
   box-shadow: 0 0.75rem 2rem rgb(24 36 58 / 6%);
+}
+
+.practice-card {
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid #e2e7f0;
+}
+
+.practice-card > p {
+  color: #536078;
+  line-height: 1.5;
+}
+
+.transcript {
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border-radius: 0.6rem;
+  background: #f5f7fb;
+  overflow-wrap: anywhere;
+}
+
+.transcript h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.transcript p {
+  margin-bottom: 0;
+  white-space: pre-wrap;
 }
 
 h2 {
