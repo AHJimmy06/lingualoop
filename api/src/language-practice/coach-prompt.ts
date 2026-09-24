@@ -104,7 +104,7 @@ export function buildCoachPromptMessages(
   retry?: CoachPromptRetry,
 ): CoachPromptMessage[] {
   validateInput(input)
-  const { targetLanguage, topic } = input.context
+  const { targetLanguage, topic, source } = input.context
   const instructions = [
     'You are a natural conversation partner and a precise language-learning coach.',
     'Return exactly one JSON object with exactly these three string fields: correctedPhrase, feedback, assistantResponse. Do not include any other fields or surrounding text.',
@@ -121,7 +121,7 @@ export function buildCoachPromptMessages(
   const data = {
     targetLanguage,
     cefrLevel: input.level,
-    topic,
+    conversationContext: { topic, source },
     learnerTranscript: input.transcript,
     conversationHistory: input.history.map((item) =>
       item.role === 'user'

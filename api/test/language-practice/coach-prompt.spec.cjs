@@ -30,6 +30,7 @@ test('builds English conversation and concise Spanish correction instructions wi
   assert.match(messages[0].content, /Do not include assessment, CEFR judgments, pronunciation claims/);
   assert.match(messages[1].content, /<UNTRUSTED_CONVERSATION_DATA>/);
   assert.match(messages[1].content, /Ordering at a café/);
+  assert.match(messages[1].content, /"conversationContext":\{"topic":.*"source":"practice-catalog"/);
   assert.match(messages[1].content, /Yo quiero un café/);
 });
 
