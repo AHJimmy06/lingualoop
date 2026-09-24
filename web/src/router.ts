@@ -16,6 +16,18 @@ export const router = createRouter({
       component: () => import('./features/language-practice/LanguagePracticeSetupView.vue'),
       meta: { requiresAuth: true },
     },
+    {
+      path: '/language-practice/sessions/:sessionId',
+      name: 'language-practice-session',
+      component: () => import('./features/language-practice/LivePracticeView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/language-practice/sessions/:sessionId/complete',
+      name: 'language-practice-completion',
+      component: () => import('./features/language-practice/PracticeReportView.vue'),
+      meta: { requiresAuth: true },
+    },
     { path: '/:pathMatch(.*)*', redirect: '/language-practice' },
   ],
 })

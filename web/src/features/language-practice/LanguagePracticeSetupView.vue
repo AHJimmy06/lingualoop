@@ -44,20 +44,21 @@
             <option v-for="item in options.durationsMinutes" :key="item" :value="item">{{ item }} minutes</option>
           </select>
         </label>
-        <aside class="unavailable" role="note">
-          <strong>Session creation is not available yet.</strong>
-          <p>Your selections are ready, but the conversation turn flow is still being built. No session will be created from this page.</p>
-        </aside>
+        <p v-if="creationError" class="feedback error" role="alert">{{ creationError }}</p>
+        <button type="button" class="start-button" :disabled="creating || !canStart" @click="startPractice">
+          {{ creating ? 'Starting practice…' : 'Start practice' }}
+        </button>
       </div>
     </section>
   </main>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { authSession } from '../../auth-session'
 import { fetchPracticeOptions, type PracticeOptions } from './practice-options'
+import { LanguagePracticeClient } from './language-practice-client'
 
 const router = useRouter()
 const options = ref<PracticeOptions | null>(null)
@@ -67,6 +68,31 @@ const level = ref('')
 const topic = ref('')
 const duration = ref<number | null>(null)
 const loggingOut = ref(false)
+const creating = ref(false)
+const creationError = ref('')
+const client = new LanguagePracticeClient(authSession)
+const canStart = computed(() => Boolean(options.value &&
+  options.value.levels.includes(level.value) &&
+  options.value.topics.some((item) => item.code === topic.value) &&
+  options.value.durationsMinutes.includes(duration.value ?? 0)))
+
+async function startPractice(): Promise<void> {
+  if (creating.value || !options.value || !canStart.value) return
+  creating.value = true
+  creationError.value = ''
+  try {
+    const created = await client.createSession({
+      level: level.value as 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2',
+      topic: topic.value as 'travel' | 'work' | 'studies' | 'everyday-conversation',
+      durationMinutes: duration.value as 5 | 10 | 15,
+    })
+    await router.push(`/language-practice/sessions/${created.id}`)
+  } catch {
+    creationError.value = 'Practice could not be started. No session was confirmed; please try again.'
+  } finally {
+    creating.value = false
+  }
+}
 
 async function loadOptions(): Promise<void> {
   loading.value = true
@@ -119,7 +145,7 @@ select:focus-visible, button:focus-visible { outline: 3px solid #5268b4; outline
 .feedback { padding: 1.25rem; border-radius: .65rem; background: #f5f7fb; color: #536078; line-height: 1.5; }
 .feedback.error { border: 1px solid #e7c7c7; background: #fff7f7; color: #842d2d; }
 .feedback.error p { margin: 0 0 1rem; }
-.unavailable { margin-top: .35rem; padding: 1rem 1.1rem; border-left: 4px solid #a77b28; border-radius: .3rem; background: #fff9ec; color: #59461f; line-height: 1.5; }
-.unavailable p { margin: .35rem 0 0; }
+.start-button { min-height: 3rem; padding: .65rem 1rem; border: 0; border-radius: .55rem; background: #233a83; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+.start-button:disabled { cursor: wait; opacity: .6; }
 @media (max-width: 520px) { .page-heading { flex-direction: column; } }
 </style>
