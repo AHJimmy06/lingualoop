@@ -4,6 +4,7 @@ const {
   ALLOWED_COACH_MODELS,
   CoachRuntimeConfigurationError,
   createOpenAICoachAdapter,
+  createOpenAIResponsesClient,
   parseCoachKeyFile,
 } = require('../../dist/language-practice/coach-runtime.providers.js');
 
@@ -35,6 +36,17 @@ function dependencies(overrides = {}) {
     ...overrides,
   };
 }
+
+test('constructs a reusable Responses client with the allowlisted model and a no-retry 90-second SDK', () => {
+  const deps = dependencies();
+  const client = createOpenAIResponsesClient(config, deps);
+  assert.equal(typeof client.responses.create, 'function');
+  assert.equal(deps.observed.requestedPath, config.keyFilePath);
+  assert.deepEqual(deps.observed.constructorOptions, {
+    apiKey: 'test-key-not-a-real-credential', maxRetries: 0, timeout: 90_000,
+  });
+  assert.deepEqual(ALLOWED_COACH_MODELS, ['gpt-5.6-luna', 'gpt-6-luna']);
+});
 
 test('constructs the inert adapter with the allowlisted model and a no-retry 90-second SDK', () => {
   const deps = dependencies();

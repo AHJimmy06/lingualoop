@@ -34,14 +34,17 @@ export function parseCoachKeyFile(contents: string): string {
 }
 
 /** Constructed only by a future, explicitly authorized caller; this module is not registered. */
-export function createOpenAICoachAdapter(
+export type OpenAIResponsesClientFactoryOptions = {
+  OpenAIConstructor?: OpenAIConstructor
+  readFile?: (filePath: string) => string
+  inspectFile?: (filePath: string) => { isFile(): boolean; mode: number }
+}
+
+/** Construct an inert Responses API client from an explicitly configured, private key file. */
+export function createOpenAIResponsesClient<T = CoachResponsesClient>(
   config: CoachRuntimeConfig,
-  options: {
-    OpenAIConstructor?: OpenAIConstructor
-    readFile?: (filePath: string) => string
-    inspectFile?: (filePath: string) => { isFile(): boolean; mode: number }
-  } = {},
-): CoachAdapter {
+  options: OpenAIResponsesClientFactoryOptions = {},
+): T {
   if (
     !config || typeof config.keyFilePath !== 'string' ||
     !isAbsolute(config.keyFilePath) ||
@@ -59,8 +62,19 @@ export function createOpenAICoachAdapter(
     const readFile = options.readFile ?? ((filePath) => readFileSync(filePath, 'utf8'))
     const apiKey = parseCoachKeyFile(readFile(config.keyFilePath))
     const Sdk = options.OpenAIConstructor ?? (OpenAI as unknown as OpenAIConstructor)
-    const client = new Sdk({ apiKey, maxRetries: 0, timeout: 90_000 })
-    return new CoachAdapter(client as CoachResponsesClient, config.model)
+    return new Sdk({ apiKey, maxRetries: 0, timeout: 90_000 }) as T
+  } catch {
+    throw new CoachRuntimeConfigurationError()
+  }
+}
+
+/** Construct the legacy turn adapter over the shared, guarded Responses client. */
+export function createOpenAICoachAdapter(
+  config: CoachRuntimeConfig,
+  options: OpenAIResponsesClientFactoryOptions = {},
+): CoachAdapter {
+  try {
+    return new CoachAdapter(createOpenAIResponsesClient(config, options), config.model)
   } catch {
     throw new CoachRuntimeConfigurationError()
   }
