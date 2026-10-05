@@ -14,7 +14,7 @@ require.extensions['.ts'] = (module, filename) => {
 };
 
 const guards = require('../src/features/language-practice/practice-recorder-guards.ts');
-const component = fs.readFileSync(path.join(__dirname, '../src/features/language-practice/PracticeRecorder.vue'), 'utf8');
+const component = fs.readFileSync(path.join(__dirname, '../src/features/language-practice/PracticeRecorder.tsx'), 'utf8');
 const guardsSource = fs.readFileSync(path.join(__dirname, '../src/features/language-practice/practice-recorder-guards.ts'), 'utf8');
 
 test('recording validity enforces positive payload, 250ms minimum, and 2MiB maximum', () => {
@@ -64,11 +64,11 @@ test('Space shortcut ignores focused links, summaries, and custom interactive-ro
 test('component source uses audio-only capture, supported MIME selection, and no stale recording delivery', () => {
   assert.match(component, /selectSupportedAudioMimeType\(\)/);
   assert.match(component, /getUserMedia\(\{ audio: true, video: false \}\)/);
-  assert.match(component, /currentOperation === operation && isValidRecording/);
-  assert.match(component, /onBeforeUnmount\([\s\S]*?disposed = true/);
+  assert.match(component, /operation === operationRef\.current && !disposedRef\.current/);
+  assert.match(component, /useEffect\([\s\S]*?disposedRef\.current = true/);
   assert.match(guardsSource, /MAX_RECORDING_MS = 20_000/);
   assert.match(guardsSource, /MAX_AUDIO_BYTES = 2 \* 1024 \* 1024/);
-  assert.match(component, /stopRequestedDurationMs = performance\.now\(\) - startedAt/);
+  assert.match(component, /requestedDurationRef\.current = performance\.now\(\) - startedAtRef\.current/);
   assert.match(component, /MAX_RECORDING_MS - 500/);
   assert.doesNotMatch(component, /fetch\(|XMLHttpRequest|speechSynthesis/);
 });

@@ -14,9 +14,9 @@ require.extensions['.ts'] = (module, filename) => {
 };
 
 const { anchorTimer, projectRemainingMs } = require('../src/features/language-practice/live-session-state.ts');
-const routerPath = path.join(__dirname, '../src/router.ts');
-const routerSource = fs.readFileSync(routerPath, 'utf8');
-const setupPath = path.join(__dirname, '../src/features/language-practice/LanguagePracticeSetupView.vue');
+const routesPath = path.join(__dirname, '../src/react-routes.tsx');
+const routesSource = fs.readFileSync(routesPath, 'utf8');
+const setupPath = path.join(__dirname, '../src/features/language-practice/LanguagePracticeSetupView.tsx');
 const setupSource = fs.readFileSync(setupPath, 'utf8');
 
 test('projects server remaining time against a monotonic clock without increasing it', () => {
@@ -33,10 +33,29 @@ test('a fresh server snapshot replaces the previous countdown anchor', () => {
   assert.equal(projectRemainingMs(anchorTimer(0, 9_000), 9_000), 0);
 });
 
-test('registers protected session and completion routes with the existing report view', () => {
-  assert.match(routerSource, /path: '\/language-practice\/sessions\/:sessionId',\s*name: 'language-practice-session'[\s\S]*?LivePracticeView\.vue'[\s\S]*?requiresAuth: true/);
-  assert.match(routerSource, /path: '\/language-practice\/sessions\/:sessionId\/complete',\s*name: 'language-practice-completion'[\s\S]*?PracticeReportView\.vue'[\s\S]*?requiresAuth: true/);
-  assert.match(setupSource, /createSession\(/);
-  assert.match(setupSource, /router\.push\(`\/language-practice\/sessions\/\$\{created\.id\}`\)/);
-  assert.match(setupSource, /if \(creating\.value \|\| !options\.value \|\| !canStart\.value\) return/);
+test('registers React session and completion routes behind the session gate', () => {
+  assert.match(routesSource, /path="\/language-practice\/sessions\/:sessionId"[\s\S]*?<RouteGate><LivePracticeView \/><\/RouteGate>/);
+  assert.match(routesSource, /path="\/language-practice\/sessions\/:sessionId\/complete"[\s\S]*?<RouteGate><PracticeReportView \/><\/RouteGate>/);
+  assert.match(setupSource, /client\.createSession\(setup\)/);
+  assert.match(setupSource, /navigate\(`\/language-practice\/sessions\/\$\{created\.id\}`\)/);
+  assert.match(setupSource, /if \(creating \|\| !options \|\| !canStart \|\| duration === null\) return/);
+});
+
+test('React entry remains active without legacy Vue bootstrap, router, or views', () => {
+  const entryPath = path.join(__dirname, '../src/main.tsx');
+  const htmlPath = path.join(__dirname, '../index.html');
+  const entrySource = fs.readFileSync(entryPath, 'utf8');
+  const htmlSource = fs.readFileSync(htmlPath, 'utf8');
+  assert.match(htmlSource, /src="\/src\/main\.tsx"/);
+  assert.match(entrySource, /createRoot\(root\)\.render/);
+  for (const vueOnlyFile of [
+    '../src/main.ts',
+    '../src/router.ts',
+    '../src/App.vue',
+    '../src/features/auth/LoginView.vue',
+    '../src/features/language-practice/LanguagePracticeSetupView.vue',
+    '../src/features/language-practice/LivePracticeView.vue',
+    '../src/features/language-practice/PracticeRecorder.vue',
+    '../src/features/language-practice/PracticeReportView.vue',
+  ]) assert.equal(fs.existsSync(path.join(__dirname, vueOnlyFile)), false, `${vueOnlyFile} must not be required`);
 });
