@@ -81,6 +81,22 @@ test('recorder is remounted per session and stale recorded callbacks cannot subm
     'stale callbacks must return before recording or checking a turn');
 });
 
+test('live practice finishes explicitly, preserves pending and recorder guards, and keeps partner replay compact', () => {
+  const view = fs.readFileSync(viewPath, 'utf8');
+  assert.match(view, /client\.finishSession\(requestedSessionId\)/);
+  assert.match(view, /finishing/);
+  assert.match(view, /onBusyChange/);
+  assert.match(view, /disabled=\{[^}]*finishing[^}]*recorderBusy|disabled=\{[^}]*recorderBusy[^}]*finishing/);
+  assert.match(view, /title="Replay response"/);
+  assert.match(view, /aria-label="Replay response"/);
+  assert.doesNotMatch(view, /controls preload="none"/);
+  assert.doesNotMatch(view, /Use the replay button or audio controls|audio player controls/);
+  assert.doesNotMatch(view, /Record up to 20 seconds\. If the result is uncertain, checking again reuses the exact recording and turn ID\.|Ready to record|Press Space when no interactive control is focused\. Maximum 20 seconds\.|Turn completed and saved\.|Your response is ready\.|Time is up\. Checking the session status before opening its report/);
+  assert.match(view, /setTurnStatus\(''\);\s*const nextUrl = audioController\.current\.replace\(response\)/);
+  assert.match(view, /align="end"[\s\S]*?<MessageHeader>You/);
+  assert.match(view, /align="start"[\s\S]*?<MessageHeader>Conversation partner/);
+});
+
 test('live route renders shadcn left/right message bubbles and standalone recording controls', () => {
   const view = fs.readFileSync(viewPath, 'utf8');
   const routes = fs.readFileSync(routesPath, 'utf8');
@@ -89,7 +105,7 @@ test('live route renders shadcn left/right message bubbles and standalone record
   assert.match(view, /<Message[^>]*align="end"/);
   assert.match(view, /<BubbleContent/);
   assert.match(view, /<PracticeRecorder/);
-  assert.match(view, /Check same turn/);
-  assert.match(view, /aria-label="Replay response audio"/);
+  assert.match(view, /Check for response/);
+  assert.match(view, /aria-label="Replay response"/);
   assert.doesNotMatch(view, /turn-notice|<textarea|<input[^>]+text/i);
 });

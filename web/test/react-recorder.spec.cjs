@@ -31,6 +31,14 @@ test('recording buffer accepts a valid payload exactly once and enforces duratio
   assert.equal(oversized.finish(20_000, 'audio/webm'), null);
 });
 
+test('recorder exposes starting and recording state without changing guarded shortcut or upload behavior', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/features/language-practice/PracticeRecorder.tsx'), 'utf8');
+  assert.match(source, /onBusyChange\?: \(busy: boolean\) => void/);
+  assert.match(source, /onBusyChange\?\.\(starting \|\| recording\)/);
+  assert.doesNotMatch(source, /Ready to record|You can start when ready|Press Space when no interactive control is focused\. Maximum 20 seconds\./);
+  assert.match(source, /\{\(starting \|\| recording\) && <p[^>]*role="status"/);
+});
+
 test('recorder source preserves guarded Space behavior and cancels stale captures without upload', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/features/language-practice/PracticeRecorder.tsx'), 'utf8');
   assert.match(source, /isRecorderShortcut\(event, disabled\)/);

@@ -30,7 +30,7 @@ test('a pending or in-flight turn blocks recording; only PROCESSING remains pend
 test('React live view uses a stable controller ID and blocks session refresh while pending', () => {
   assert.match(component, /new LiveTurnController\(\)/);
   assert.match(component, /client\.submitTurn\(id, blob, clientTurnId\)/);
-  assert.match(component, /Check same turn/);
+  assert.match(component, /Check for response/);
   assert.match(component, /controllerRef\.current\.pending/);
   assert.match(component, /audioController\.current\.clear\(\)/);
 });

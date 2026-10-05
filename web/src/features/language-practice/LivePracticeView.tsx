@@ -33,6 +33,8 @@ export function LivePracticeView() {
   const [turnStatus, setTurnStatus] = useState('');
   const [pending, setPending] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [finishing, setFinishing] = useState(false);
+  const [recorderBusy, setRecorderBusy] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [playbackError, setPlaybackError] = useState('');
   const [clock, setClock] = useState({ now: 0, anchor: null as TimerAnchor | null });
@@ -45,6 +47,7 @@ export function LivePracticeView() {
   sessionIdRef.current = sessionId;
   const expiryCheckRequested = useRef(false);
   const navigatingToCompletion = useRef(false);
+  const finishInFlight = useRef(false);
   sessionRef.current = session;
   controllerRef.current = turnController;
 
@@ -97,6 +100,9 @@ export function LivePracticeView() {
     setTurnStatus('');
     setPending(false);
     setSubmitting(false);
+    setFinishing(false);
+    setRecorderBusy(false);
+    finishInFlight.current = false;
     setAudioUrl(null);
     audioController.current.clear();
     setPlaybackError('');
@@ -141,7 +147,7 @@ export function LivePracticeView() {
       await audioElement.current.play();
     }).then((played) => {
       if (activeEffect && !played && audioController.current.manualReplayRequired) {
-        setPlaybackError('Automatic playback was blocked. Use the replay button or audio controls to listen.');
+        setPlaybackError('Automatic playback did not start. Tap Replay response to listen.');
       }
     });
     return () => { activeEffect = false; };
@@ -165,7 +171,7 @@ export function LivePracticeView() {
       const now = performance.now();
       setClock({ now, anchor: anchorTimer(response.session.remainingMs, now) });
       expiryCheckRequested.current = response.session.status !== 'ACTIVE' || response.session.remainingMs === 0;
-      setTurnStatus('This turn is still processing. Check the same turn to retrieve its result; it will not be submitted as a new turn.');
+      setTurnStatus('Your response is still on its way. Check again shortly.');
     } else if (result.kind === 'completed' || result.kind === 'failed') {
       const response = result.response as LanguagePracticeTurnResponse;
       setSession(response.session);
@@ -174,20 +180,20 @@ export function LivePracticeView() {
       setClock({ now, anchor: anchorTimer(response.session.remainingMs, now) });
       expiryCheckRequested.current = response.session.status !== 'ACTIVE' || response.session.remainingMs === 0;
       if (result.kind === 'failed') {
-        setTurnStatus('This turn failed. It cannot be retried with the same ID; record a new turn if the session is still active.');
+        setTurnStatus('This response could not be completed. Please record a new response if time remains.');
         audioController.current.clear();
         setAudioUrl(null);
       } else {
-        setTurnStatus('Turn completed and saved.');
+        setTurnStatus('');
         const nextUrl = audioController.current.replace(response);
         setAudioUrl(nextUrl);
         setPlaybackError('');
       }
       if (response.session.status === 'EXPIRED' || response.session.status === 'COMPLETED') navigateToCompletion(requestedSessionId);
     } else if (result.kind === 'uncertain') {
-      setTurnStatus('The result is uncertain. Check the same turn with the same recording and ID; do not record another turn yet.');
+      setTurnStatus('We could not confirm your response yet. Check again before recording another.');
       if (result.cause instanceof LanguagePracticeClientError && result.cause.kind === 'unauthenticated') {
-        setError('Sign in may be required. Checking again reuses this turn ID and recording.');
+        setError('Please sign in, then check again to retrieve your response.');
       }
     }
   };
@@ -207,7 +213,33 @@ export function LivePracticeView() {
       if (!audioElement.current) throw new Error('Audio element is not ready');
       await audioElement.current.play();
     });
-    if (!played) setPlaybackError('Playback did not start. Use the audio player controls to try again.');
+    if (!played) setPlaybackError('Playback did not start. Tap Replay response to try again.');
+  };
+
+  const onRecorderBusyChange = useCallback((busy: boolean) => setRecorderBusy(busy), []);
+
+  const finishPractice = async () => {
+    if (finishInFlight.current || !active || turnController.pending || submitting || recorderBusy || sessionIdRef.current !== sessionId) return;
+    finishInFlight.current = true;
+    setFinishing(true);
+    setError('');
+    const requestedSessionId = sessionId;
+    try {
+      const result = await client.finishSession(requestedSessionId);
+      if (sessionIdRef.current !== requestedSessionId) return;
+      if (result.id === requestedSessionId && (result.status === 'COMPLETED' || result.status === 'EXPIRED')) {
+        navigateToCompletion(requestedSessionId);
+      }
+    } catch {
+      if (sessionIdRef.current === requestedSessionId) {
+        setError('We could not finish your practice just now. Try again, or refresh your session.');
+      }
+    } finally {
+      if (sessionIdRef.current === requestedSessionId) {
+        finishInFlight.current = false;
+        setFinishing(false);
+      }
+    }
   };
 
   return (
@@ -240,14 +272,14 @@ export function LivePracticeView() {
           {session.turns.length === 0
             ? <p className="py-3 text-sm text-muted-foreground">Your completed conversation turns will appear here.</p>
             : <ol className="grid gap-5">
-              {session.turns.map((turn) => <li key={turn.sequence} className="min-w-0">
+              {session.turns.map((turn, index) => <li key={turn.sequence} className="min-w-0">
                 <p className="mb-3 text-xs font-medium text-muted-foreground">Turn {turn.sequence}</p>
                 <MessageGroup className="gap-3">
-                  <Message align="start">
+                  <Message align="end">
                     <MessageContent><MessageHeader>You</MessageHeader><Bubble variant="tinted"><BubbleContent>{turn.transcript || 'No transcript was saved for this turn.'}</BubbleContent></Bubble></MessageContent>
                   </Message>
-                  <Message align="end">
-                    <MessageContent><MessageHeader>Conversation partner</MessageHeader><Bubble variant="secondary"><BubbleContent>{turn.assistantResponse || 'No response text was saved for this turn.'}</BubbleContent></Bubble></MessageContent>
+                  <Message align="start">
+                    <MessageContent><MessageHeader>Conversation partner</MessageHeader><Bubble variant="secondary"><BubbleContent>{turn.assistantResponse || 'No response text was saved for this turn.'}</BubbleContent></Bubble>{index === session.turns.length - 1 && audioUrl && <Button type="button" variant="ghost" size="icon" className="mt-1" title="Replay response" onClick={() => void replayAudio()} aria-label="Replay response"><Volume2 aria-hidden="true" /></Button>}</MessageContent>
                   </Message>
                 </MessageGroup>
               </li>)}
@@ -256,29 +288,30 @@ export function LivePracticeView() {
 
         <section className="grid justify-items-center gap-4 border-t py-6" aria-label="Voice turn controls">
           {turnController.pending
-            ? <p className="max-w-md text-center text-sm leading-6 text-muted-foreground">A turn is pending. Keep this page open; no new recording is allowed until it resolves.</p>
+            ? <p className="max-w-md text-center text-sm leading-6 text-muted-foreground">Your response is being prepared. You can check again shortly; no new recording is needed.</p>
             : <p className="max-w-md text-center text-sm leading-6 text-muted-foreground">{active
-              ? 'Record up to 20 seconds. If the result is uncertain, checking again reuses the exact recording and turn ID.'
+              ? 'When you are ready, record your response.'
               : 'This session has expired. You can no longer record a new turn.'}</p>}
-          {!turnController.pending && <PracticeRecorder key={sessionId} disabled={!active} onRecorded={onRecorded} />}
+          {!turnController.pending && <PracticeRecorder key={sessionId} disabled={!active} onRecorded={onRecorded} onBusyChange={onRecorderBusyChange} />}
           {turnController.pending && <Button type="button" variant="outline" disabled={submitting} onClick={() => void checkSameTurn(false)}>
-            {submitting ? 'Checking…' : 'Check same turn'}
+            {submitting ? 'Checking…' : 'Check for response'}
           </Button>}
           {turnStatus && <p className="max-w-lg text-center text-sm text-muted-foreground" role="status">{turnStatus}</p>}
-          {turnController.pending && remainingMs === 0 && <p className="max-w-lg text-center text-sm text-muted-foreground" role="status">The session timer has expired while this turn is unresolved. Keep the recording pending and use Check same turn; no new turn or report request will be made automatically.</p>}
-          {audioUrl && <div className="grid justify-items-center gap-2">
-            <audio ref={audioElement} src={audioUrl} controls preload="none" aria-label="Saved assistant audio response" />
-            <Button type="button" variant="outline" size="sm" onClick={() => void replayAudio()} aria-label="Replay response audio">
-              <Volume2 aria-hidden="true" /> Replay response
-            </Button>
+          {turnController.pending && remainingMs === 0 && <p className="max-w-lg text-center text-sm text-muted-foreground" role="status">Time is up, but your response is still being prepared. Check again when ready.</p>}
+          {audioUrl && <>
+            <audio ref={audioElement} src={audioUrl} preload="none" hidden />
             {playbackError && <p className="text-center text-sm text-muted-foreground" role="status">{playbackError}</p>}
-          </div>}
+          </>}
         </section>
-        {remainingMs === 0 && session.status === 'ACTIVE' && !turnController.pending && <p className="mb-4 text-sm text-muted-foreground" role="status">Time is up. Checking the session status before opening its report…</p>}
         {error && <p className="mb-4 text-sm text-destructive" role="alert">{error}</p>}
-        <Button type="button" variant="outline" disabled={refreshing || turnController.pending !== null} onClick={() => void loadSession()}>
-          {refreshing ? 'Refreshing…' : 'Refresh session'}
-        </Button>
+        <div className="flex flex-wrap gap-3">
+          <Button type="button" variant="outline" disabled={refreshing || turnController.pending !== null} onClick={() => void loadSession()}>
+            {refreshing ? 'Refreshing…' : 'Refresh session'}
+          </Button>
+          <Button type="button" disabled={!active || turnController.pending !== null || submitting || finishing || recorderBusy} onClick={() => void finishPractice()}>
+            {finishing ? 'Finishing…' : 'Finish practice'}
+          </Button>
+        </div>
       </>}
     </main>
   );

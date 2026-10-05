@@ -73,6 +73,37 @@ test('uses exact authenticated same-origin paths for setup, owned detail, and de
   assert.equal(requests.length, 3, 'report request must not trigger separate paid inference calls');
 });
 
+test('finishes a session through authenticated POST and validates the exact completion response', async () => {
+  const { auth, calls } = authenticatedFetch((url) => {
+    assert.equal(url, `/api/language-practice/sessions/${sessionId}/finish`);
+    return json({ id: sessionId, status: 'COMPLETED' });
+  });
+  const client = new LanguagePracticeClient(auth);
+  assert.deepEqual(await client.finishSession(sessionId), { id: sessionId, status: 'COMPLETED' });
+  const request = calls.find((call) => call.url.includes('/finish'));
+  assert.equal(request.init.method, 'POST');
+  assert.equal(request.init.credentials, 'same-origin');
+  assert.match(request.init.headers.Authorization, /^Bearer volatile-/);
+  assert.deepEqual(JSON.parse(request.init.body), {});
+});
+
+test('finish validates session identity and status and does not retry conflicts or unavailable responses', async () => {
+  for (const body of [
+    { id: clientTurnId, status: 'COMPLETED' },
+    { id: sessionId, status: 'ACTIVE' },
+    { id: sessionId, status: 'EXPIRED', extra: true },
+  ]) {
+    const { auth } = authenticatedFetch(() => json(body));
+    await assert.rejects(new LanguagePracticeClient(auth).finishSession(sessionId), { kind: 'invalid-response' });
+  }
+  for (const failure of [409, 503]) {
+    let posts = 0;
+    const { auth } = authenticatedFetch(() => { posts++; return json({}, failure); });
+    await assert.rejects(new LanguagePracticeClient(auth).finishSession(sessionId), (error) => error.status === failure);
+    assert.equal(posts, 1);
+  }
+});
+
 test('submits multipart audio and preserves the caller UUID and FormData across a single 401 refresh', async () => {
   let turnRequests = 0;
   const { auth, calls } = authenticatedFetch((url, init) => {

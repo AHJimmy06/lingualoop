@@ -26,6 +26,7 @@ export type PracticeSetup = {
   durationMinutes: LanguagePracticeDuration
 }
 export type SessionTurn = { sequence: number; transcript: string; assistantResponse: string; completedAt: string }
+export type FinishSessionResponse = { id: string; status: 'COMPLETED' | 'EXPIRED' }
 export type SessionDetail = {
   id: string
   status: SessionStatus
@@ -197,6 +198,14 @@ function parseTurn(value: unknown): LanguagePracticeTurnResponse {
   }
 }
 
+function parseFinish(value: unknown, expectedSessionId: string): FinishSessionResponse {
+  if (!isRecord(value) || !hasExactKeys(value, ['id', 'status']) || value.id !== expectedSessionId ||
+      !isUuid(value.id) || (value.status !== 'COMPLETED' && value.status !== 'EXPIRED')) {
+    throw new LanguagePracticeClientError('invalid-response')
+  }
+  return { id: value.id, status: value.status }
+}
+
 function parseReport(value: unknown, expectedSessionId: string): LanguagePracticeReport {
   if (!isRecord(value) || !hasExactKeys(value, [
     'sessionId', 'summary', 'corrections', 'strengths', 'recommendations', 'generatedWithAi', 'createdAt',
@@ -274,6 +283,12 @@ export class LanguagePracticeClient {
     const result = parseTurn(await this.readJson(response))
     if (result.clientTurnId !== clientTurnId) throw new LanguagePracticeClientError('invalid-response')
     return result
+  }
+
+  async finishSession(sessionId: string): Promise<FinishSessionResponse> {
+    this.validateUuid(sessionId)
+    const response = await this.post(`/api/language-practice/sessions/${sessionId}/finish`, {})
+    return parseFinish(await this.readJson(response), sessionId)
   }
 
   async getOrCreateReport(sessionId: string): Promise<LanguagePracticeReport> {
