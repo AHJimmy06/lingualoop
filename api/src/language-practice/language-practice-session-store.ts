@@ -38,6 +38,13 @@ export class LanguagePracticeSessionStoreError extends Error {
   }
 }
 
+export class LanguagePracticeSessionFinishError extends Error {
+  constructor(readonly reason: 'turn_in_progress') {
+    super(reason);
+    this.name = 'LanguagePracticeSessionFinishError';
+  }
+}
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CREATE_SESSION_SQL = `
   INSERT INTO lingualoop_language_practice_sessions
@@ -56,6 +63,19 @@ const FIND_SESSION_SQL = `
     duration_minutes AS "durationMinutes",
     started_at AS "startedAt", expires_at AS "expiresAt",
     GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (expires_at - NOW())) * 1000)::INTEGER) AS "remainingMs"
+  FROM lingualoop_language_practice_sessions
+  WHERE owner_id = $1 AND id = $2
+`;
+const FINISH_SESSION_SQL = `
+  UPDATE lingualoop_language_practice_sessions
+  SET status = 'COMPLETED'
+  WHERE owner_id = $1 AND id = $2 AND status = 'ACTIVE'
+    AND expires_at > clock_timestamp() AND active_turn_lease_token IS NULL
+  RETURNING id, status
+`;
+const FIND_FINISH_STATE_SQL = `
+  SELECT id, status, active_turn_lease_token AS "activeTurnLeaseToken",
+    expires_at <= clock_timestamp() AS elapsed
   FROM lingualoop_language_practice_sessions
   WHERE owner_id = $1 AND id = $2
 `;
@@ -98,7 +118,7 @@ function session(value: unknown): LanguagePracticeSession {
     durationMinutes: row.durationMinutes as LanguagePracticeDurationMinutes,
     startedAt: timestamp(row.startedAt),
     expiresAt: timestamp(row.expiresAt),
-    remainingMs: row.remainingMs,
+    remainingMs: row.status === 'COMPLETED' ? 0 : row.remainingMs,
     turnInProgress: false,
   };
 }
@@ -127,6 +147,42 @@ export class LanguagePracticeSessionStore {
         ownerId, setup.level, setup.topic, setup.durationMinutes,
       ]), 1, 1)[0]);
     } catch {
+      throw new LanguagePracticeSessionStoreError();
+    }
+  }
+
+  async finishSession(ownerId: string, sessionId: string): Promise<{ id: string; status: 'COMPLETED' | 'EXPIRED' } | null> {
+    uuid(ownerId);
+    uuid(sessionId);
+    try {
+      const updated = rows(await this.executor.query(FINISH_SESSION_SQL, [ownerId, sessionId]), 0, 1);
+      if (updated.length) {
+        const row = updated[0] as Record<string, unknown>;
+        uuid(row.id);
+        if (row.status !== 'COMPLETED') throw new LanguagePracticeSessionStoreError();
+        return { id: row.id, status: 'COMPLETED' };
+      }
+
+      // The conditional UPDATE serializes with turn reservation on the same session row.
+      // Re-read after a skipped update to classify a concurrent close or a live lease.
+      const stateRows = rows(await this.executor.query(FIND_FINISH_STATE_SQL, [ownerId, sessionId]), 0, 1);
+      if (!stateRows.length) return null;
+      const state = stateRows[0] as Record<string, unknown>;
+      uuid(state.id);
+      if (state.status !== 'ACTIVE' && state.status !== 'EXPIRED' && state.status !== 'COMPLETED') {
+        throw new LanguagePracticeSessionStoreError();
+      }
+      if (state.activeTurnLeaseToken !== null && state.activeTurnLeaseToken !== undefined) {
+        uuid(state.activeTurnLeaseToken);
+        if (state.status === 'ACTIVE') throw new LanguagePracticeSessionFinishError('turn_in_progress');
+      }
+      if (state.status === 'COMPLETED' || state.status === 'EXPIRED' ||
+          (state.status === 'ACTIVE' && state.elapsed === true)) {
+        return { id: state.id, status: state.status === 'COMPLETED' ? 'COMPLETED' : 'EXPIRED' };
+      }
+      throw new LanguagePracticeSessionStoreError();
+    } catch (error) {
+      if (error instanceof LanguagePracticeSessionFinishError) throw error;
       throw new LanguagePracticeSessionStoreError();
     }
   }

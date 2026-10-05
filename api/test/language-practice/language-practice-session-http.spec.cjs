@@ -22,10 +22,11 @@ const row = {
 
 async function createServer(t, turnStore = { async listCompletedTurns(owner, id) {
   return owner === ownerId && id === sessionId ? completedTurns : [];
-} }, { reportStore, identityOwner = ownerId } = {}) {
+} }, { reportStore, identityOwner = ownerId, finishError } = {}) {
   const calls = [];
   const turnCalls = [];
   const reportCalls = [];
+  const finishCalls = [];
   class TestModule {}
   Module({
     controllers: [LanguagePracticeSessionController],
@@ -38,6 +39,11 @@ async function createServer(t, turnStore = { async listCompletedTurns(owner, id)
         async getSession(owner, id) {
           calls.push({ owner, id });
           return owner === ownerId && id === sessionId ? row : null;
+        },
+        async finishSession(owner, id) {
+          finishCalls.push({ owner, id });
+          if (finishError) throw finishError;
+          return owner === ownerId && id === sessionId ? { id, status: 'COMPLETED' } : null;
         },
       } },
       { provide: require('../../dist/language-practice/language-practice-session.providers.js').LANGUAGE_PRACTICE_TURN_STORE,
@@ -65,7 +71,7 @@ async function createServer(t, turnStore = { async listCompletedTurns(owner, id)
   await app.listen(0, '127.0.0.1');
   t.after(async () => { await app.close(); });
   const address = app.getHttpServer().address();
-  return { base: `http://127.0.0.1:${address.port}`, calls, turnCalls, reportCalls };
+  return { base: `http://127.0.0.1:${address.port}`, calls, turnCalls, reportCalls, finishCalls };
 }
 
 const authHeaders = { authorization: `Bearer ${token}` };
@@ -118,6 +124,61 @@ test('session detail is protected and returns owner-scoped completed turns', asy
   assert.equal(turnCalls.length, 1, 'turn listing is not called before the owned session lookup succeeds');
   const malformed = await fetch(`${base}/language-practice/sessions/not-a-uuid`, { headers: authHeaders });
   assert.equal(malformed.status, 400);
+});
+
+test('finish endpoint is protected, owner-scoped, minimal, idempotent, and report-ready', async (t) => {
+  const { base, finishCalls, reportCalls } = await createServer(t);
+  const endpoint = `${base}/language-practice/sessions/${sessionId}/finish`;
+  assert.equal((await fetch(endpoint, { method: 'POST' })).status, 401);
+  assert.deepEqual(finishCalls, []);
+
+  const first = await fetch(endpoint, { method: 'POST', headers: authHeaders });
+  assert.equal(first.status, 200);
+  assert.deepEqual(await first.json(), { id: sessionId, status: 'COMPLETED' });
+  const replay = await fetch(endpoint, { method: 'POST', headers: authHeaders });
+  assert.equal(replay.status, 200);
+  assert.deepEqual(await replay.json(), { id: sessionId, status: 'COMPLETED' });
+  assert.deepEqual(finishCalls, [
+    { owner: ownerId, id: sessionId }, { owner: ownerId, id: sessionId },
+  ]);
+  assert.deepEqual(reportCalls, [], 'finishing does not invoke report generation or providers');
+  const report = await fetch(`${base}/language-practice/sessions/${sessionId}/report`, {
+    method: 'POST', headers: authHeaders,
+  });
+  assert.equal(report.status, 200, 'the completed session can immediately enter the report endpoint');
+  assert.deepEqual(reportCalls, [{ owner: ownerId, id: sessionId }]);
+
+  const hiddenOwner = await createServer(t, undefined, { identityOwner: otherOwnerId });
+  const hidden = await fetch(`${hiddenOwner.base}/language-practice/sessions/${sessionId}/finish`, {
+    method: 'POST', headers: authHeaders,
+  });
+  assert.equal(hidden.status, 404);
+  assert.deepEqual(await hidden.json(), { statusCode: 404, message: 'Not found.' });
+
+  const malformed = await fetch(`${base}/language-practice/sessions/not-a-uuid/finish`, {
+    method: 'POST', headers: authHeaders,
+  });
+  assert.equal(malformed.status, 400);
+});
+
+test('finish maps active leases to conflict and unexpected failures to a generic unavailable response', async (t) => {
+  const { LanguagePracticeSessionFinishError } = require('../../dist/language-practice/language-practice-session-store.js');
+  const leased = await createServer(t, undefined, {
+    finishError: new LanguagePracticeSessionFinishError('turn_in_progress'),
+  });
+  const endpoint = `${leased.base}/language-practice/sessions/${sessionId}/finish`;
+  const conflict = await fetch(endpoint, { method: 'POST', headers: authHeaders });
+  assert.equal(conflict.status, 409);
+  assert.deepEqual(await conflict.json(), { statusCode: 409, message: 'A turn is in progress.' });
+
+  const failed = await createServer(t, undefined, { finishError: new Error('private database detail') });
+  const response = await fetch(`${failed.base}/language-practice/sessions/${sessionId}/finish`, {
+    method: 'POST', headers: authHeaders,
+  });
+  assert.equal(response.status, 503);
+  const body = await response.text();
+  assert.deepEqual(JSON.parse(body), { statusCode: 503, message: 'Language practice session is unavailable.' });
+  assert.doesNotMatch(body, /private database/);
 });
 
 test('report endpoint is protected, owner-scoped, and replays the original deterministic report', async (t) => {

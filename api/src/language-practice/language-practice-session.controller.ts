@@ -4,6 +4,7 @@ import {
   LANGUAGE_PRACTICE_DURATIONS_MINUTES,
   LANGUAGE_PRACTICE_LEVELS,
   LANGUAGE_PRACTICE_TOPICS,
+  LanguagePracticeSessionFinishError,
   LanguagePracticeSessionStore,
 } from './language-practice-session-store';
 import {
@@ -36,7 +37,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 
 type VerifiedRequest = { verifiedIdentity?: { ownerId: string } };
 
-type SessionStore = Pick<LanguagePracticeSessionStore, 'createSession' | 'getSession'>;
+type SessionStore = Pick<LanguagePracticeSessionStore, 'createSession' | 'getSession' | 'finishSession'>;
 type TurnStore = Pick<LanguagePracticeTurnStore, 'listCompletedTurns'>;
 type ReportStore = Pick<LanguagePracticeReportStore, 'getOrCreate'>;
 
@@ -61,6 +62,26 @@ export class LanguagePracticeSessionController {
       maxFileSizeBytes: MAX_FILE_SIZE_BYTES,
       maxDurationMs: MAX_DURATION_MS,
     };
+  }
+
+  @Post('sessions/:sessionId/finish')
+  @HttpCode(200)
+  async finishSession(@Param('sessionId') sessionId: string, @Req() request: VerifiedRequest) {
+    if (!UUID_PATTERN.test(sessionId)) throw new HttpException('Invalid session identifier.', 400);
+    if (!request.verifiedIdentity || typeof request.verifiedIdentity.ownerId !== 'string') {
+      throw new HttpException('Authentication service unavailable.', 503);
+    }
+    try {
+      const result = await this.sessions.finishSession(request.verifiedIdentity.ownerId, sessionId);
+      if (!result) throw new HttpException('Not found.', 404);
+      return result;
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      if (error instanceof LanguagePracticeSessionFinishError && error.reason === 'turn_in_progress') {
+        throw new HttpException('A turn is in progress.', 409);
+      }
+      throw new HttpException('Language practice session is unavailable.', 503);
+    }
   }
 
   @Post('sessions/:sessionId/report')
