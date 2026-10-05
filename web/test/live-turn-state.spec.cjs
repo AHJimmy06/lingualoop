@@ -14,7 +14,7 @@ require.extensions['.ts'] = (module, filename) => {
 };
 
 const state = require('../src/features/language-practice/live-turn-state.ts');
-const component = fs.readFileSync(path.join(__dirname, '../src/features/language-practice/LivePracticeView.vue'), 'utf8');
+const component = fs.readFileSync(path.join(__dirname, '../src/features/language-practice/LivePracticeView.tsx'), 'utf8');
 
 test('a pending or in-flight turn blocks recording; only PROCESSING remains pending', () => {
   const turn = { blob: {}, clientTurnId: 'stable-id' };
@@ -27,14 +27,10 @@ test('a pending or in-flight turn blocks recording; only PROCESSING remains pend
   assert.equal(state.nextTurnState('FAILED'), 'resolved');
 });
 
-test('recorded audio gets one stable ID, and Check same turn reuses the pending blob and ID', () => {
-  assert.equal((component.match(/crypto\.randomUUID\(\)/g) || []).length, 1);
-  assert.match(component, /client\.submitTurn\(requestedSessionId, turn\.blob, turn\.clientTurnId\)/);
-  assert.match(component, /@click="sendPendingTurn\(pendingTurn\)"/);
-  assert.match(component, /pendingTurn\.value = null[\s\S]*?response\.status === 'FAILED'/);
-  assert.match(component, /if \(disposed \|\| sessionId\.value !== requestedSessionId \|\| pendingTurn\.value !== turn\) return/);
-  assert.match(component, /requestInFlight \|\| pendingTurn\.value/);
-  assert.match(component, /URL\.revokeObjectURL\(audioUrl\.value\)/);
-  assert.match(component, /response\.audioMimeType !== 'audio\/wav'/);
-  assert.doesNotMatch(component, /Voice turn controls are connecting/);
+test('React live view uses a stable controller ID and blocks session refresh while pending', () => {
+  assert.match(component, /new LiveTurnController\(\)/);
+  assert.match(component, /client\.submitTurn\(id, blob, clientTurnId\)/);
+  assert.match(component, /Check same turn/);
+  assert.match(component, /controllerRef\.current\.pending/);
+  assert.match(component, /audioController\.current\.clear\(\)/);
 });
