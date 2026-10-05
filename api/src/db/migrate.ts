@@ -13,7 +13,7 @@ const REQUIRED_MIGRATIONS = [
   '003_auth_sessions.sql', '004_refresh_rotation.sql',
   '005_language_practice_sessions.sql', '006_language_practice_turns.sql',
   '007_language_practice_turn_lease.sql', '008_language_practice_reports.sql',
-  '009_language_practice_ai_reports.sql',
+  '009_language_practice_ai_reports.sql', '010_language_practice_report_claims.sql',
 ];
 
 export interface MigrationClient {

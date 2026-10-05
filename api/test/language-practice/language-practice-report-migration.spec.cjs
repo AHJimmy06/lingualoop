@@ -33,7 +33,7 @@ async function waitForPostgres(config) {
   throw new Error(`Disposable PostgreSQL did not become ready: ${lastError?.message ?? 'timeout'}`);
 }
 
-test('migration 009 allows AI-generated reports while preserving report constraints', {
+test('migration 010 adds report claims without changing existing report behavior', {
   timeout: 180_000,
 }, async () => {
   let container;
@@ -51,7 +51,7 @@ test('migration 009 allows AI-generated reports while preserving report constrai
       user: 'postgres', password: DISPOSABLE_PASSWORD, connectionTimeoutMillis: 1_000,
     };
     client = await waitForPostgres(config);
-    assert.equal(await runLinguaLoopMigrations(client, MIGRATIONS_DIR), 9);
+    assert.equal(await runLinguaLoopMigrations(client, MIGRATIONS_DIR), 10);
     await client.end();
     client = new Client(config);
     await client.connect();
@@ -103,11 +103,47 @@ test('migration 009 allows AI-generated reports while preserving report constrai
       [AI_SESSION, JSON.stringify({})],
     );
     assert.equal(aiInserted.rows[0].generated_with_ai, true);
-    const historical = await client.query(
-      'SELECT generated_with_ai FROM lingualoop_language_practice_reports WHERE session_id = $1',
-      [SESSION],
+
+    const claimColumns = await client.query(
+      "SELECT column_name, data_type, is_nullable FROM information_schema.columns " +
+        "WHERE table_name = 'lingualoop_language_practice_report_claims' ORDER BY ordinal_position",
     );
-    assert.equal(historical.rows[0].generated_with_ai, false);
+    assert.deepEqual(claimColumns.rows, [
+      { column_name: 'session_id', data_type: 'uuid', is_nullable: 'NO' },
+      { column_name: 'claim_token', data_type: 'uuid', is_nullable: 'NO' },
+      { column_name: 'lease_expires_at', data_type: 'timestamp with time zone', is_nullable: 'NO' },
+    ]);
+    const claim = await client.query(
+      'INSERT INTO lingualoop_language_practice_report_claims ' +
+        '(session_id, claim_token, lease_expires_at) VALUES ($1, $2, now() + INTERVAL \'1 minute\') ' +
+        'RETURNING claim_token',
+      [SESSION, '523e4567-e89b-42d3-a456-426614174000'],
+    );
+    assert.equal(claim.rows[0].claim_token, '523e4567-e89b-42d3-a456-426614174000');
+    await assert.rejects(client.query(
+      'INSERT INTO lingualoop_language_practice_report_claims ' +
+        '(session_id, claim_token, lease_expires_at) VALUES ($1, $2, now())',
+      [SESSION, '523e4567-e89b-42d3-a456-426614174001'],
+    ));
+    const reclaimed = await client.query(
+      'INSERT INTO lingualoop_language_practice_report_claims ' +
+        '(session_id, claim_token, lease_expires_at) VALUES ($1, $2, now() + INTERVAL \'1 minute\') ' +
+        'ON CONFLICT (session_id) DO UPDATE SET claim_token = EXCLUDED.claim_token, ' +
+        'lease_expires_at = EXCLUDED.lease_expires_at RETURNING claim_token',
+      [SESSION, '523e4567-e89b-42d3-a456-426614174002'],
+    );
+    assert.equal(reclaimed.rows[0].claim_token, '523e4567-e89b-42d3-a456-426614174002');
+    await assert.rejects(client.query(
+      'INSERT INTO lingualoop_language_practice_report_claims ' +
+        '(session_id, claim_token, lease_expires_at) VALUES ($1, $2, now())',
+      ['323e4567-e89b-42d3-a456-426614174000', '523e4567-e89b-42d3-a456-426614174003'],
+    ));
+    const historical = await client.query(
+      'SELECT session_id, generated_with_ai FROM lingualoop_language_practice_reports ' +
+        'WHERE session_id = ANY($1::uuid[]) ORDER BY session_id',
+      [[SESSION, AI_SESSION]],
+    );
+    assert.deepEqual(historical.rows.map((row) => row.generated_with_ai), [false, true]);
     await assert.rejects(client.query(
       'INSERT INTO lingualoop_language_practice_reports (session_id) VALUES ($1)',
       ['323e4567-e89b-42d3-a456-426614174003'],
@@ -118,6 +154,10 @@ test('migration 009 allows AI-generated reports while preserving report constrai
       'SELECT session_id FROM lingualoop_language_practice_reports WHERE session_id = $1', [SESSION],
     );
     assert.deepEqual(remaining.rows, []);
+    const remainingClaims = await client.query(
+      'SELECT session_id FROM lingualoop_language_practice_report_claims WHERE session_id = $1', [SESSION],
+    );
+    assert.deepEqual(remainingClaims.rows, []);
   } finally {
     if (client) await client.end().catch(() => {});
     if (container) docker(['stop', container]);
