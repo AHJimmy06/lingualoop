@@ -63,7 +63,7 @@ export type LanguagePracticeReport = {
   corrections: LanguagePracticeReportCorrection[]
   strengths: string[]
   recommendations: string[]
-  generatedWithAi: false
+  generatedWithAi: boolean
   createdAt: string
 }
 
@@ -209,7 +209,7 @@ function parseFinish(value: unknown, expectedSessionId: string): FinishSessionRe
 function parseReport(value: unknown, expectedSessionId: string): LanguagePracticeReport {
   if (!isRecord(value) || !hasExactKeys(value, [
     'sessionId', 'summary', 'corrections', 'strengths', 'recommendations', 'generatedWithAi', 'createdAt',
-  ]) || value.sessionId !== expectedSessionId || value.generatedWithAi !== false || !isTimestamp(value.createdAt) ||
+  ]) || value.sessionId !== expectedSessionId || typeof value.generatedWithAi !== 'boolean' || !isTimestamp(value.createdAt) ||
       !boundedText(value.summary, 400) || !Array.isArray(value.corrections) || value.corrections.length > 20 ||
       !Array.isArray(value.strengths) || value.strengths.length > 3 ||
       !Array.isArray(value.recommendations) || value.recommendations.length > 3) {
@@ -239,7 +239,7 @@ function parseReport(value: unknown, expectedSessionId: string): LanguagePractic
     corrections,
     strengths: parseTextList(value.strengths),
     recommendations: parseTextList(value.recommendations),
-    generatedWithAi: false,
+    generatedWithAi: value.generatedWithAi,
     createdAt: value.createdAt,
   }
 }

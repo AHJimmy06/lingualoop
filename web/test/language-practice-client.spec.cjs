@@ -73,6 +73,26 @@ test('uses exact authenticated same-origin paths for setup, owned detail, and de
   assert.equal(requests.length, 3, 'report request must not trigger separate paid inference calls');
 });
 
+test('accepts either exact report provenance boolean and rejects missing or non-boolean provenance', async () => {
+  let responseBody = { ...reportBody, generatedWithAi: true };
+  const { auth } = authenticatedFetch(() => json(responseBody));
+  const client = new LanguagePracticeClient(auth);
+  assert.equal((await client.getOrCreateReport(sessionId)).generatedWithAi, true);
+
+  responseBody = { ...reportBody, generatedWithAi: false };
+  assert.equal((await client.getOrCreateReport(sessionId)).generatedWithAi, false);
+
+  for (const invalid of [
+    { ...reportBody, generatedWithAi: 'true' },
+    { ...reportBody, generatedWithAi: 1 },
+    { ...reportBody, generatedWithAi: null },
+    Object.fromEntries(Object.entries(reportBody).filter(([key]) => key !== 'generatedWithAi')),
+  ]) {
+    responseBody = invalid;
+    await assert.rejects(client.getOrCreateReport(sessionId), { kind: 'invalid-response' });
+  }
+});
+
 test('finishes a session through authenticated POST and validates the exact completion response', async () => {
   const { auth, calls } = authenticatedFetch((url) => {
     assert.equal(url, `/api/language-practice/sessions/${sessionId}/finish`);
