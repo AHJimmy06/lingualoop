@@ -62,7 +62,7 @@ test('report store is owner-scoped, deterministic, immutable, and closes stale l
       password: PASSWORD, connectionTimeoutMillis: 1_000,
     };
     client = await waitForPostgres(config);
-    assert.equal(await runLinguaLoopMigrations(client, MIGRATIONS_DIR), 8);
+    assert.equal(await runLinguaLoopMigrations(client, MIGRATIONS_DIR), 10);
     await client.end();
     client = new Client(config);
     await client.connect();
@@ -94,6 +94,78 @@ test('report store is owner-scoped, deterministic, immutable, and closes stale l
     pool = new Pool(config);
     executor = createLinguaLoopQueryExecutor({ host: '127.0.0.1', port, password: 'a'.repeat(64) }, pool);
     const store = new LanguagePracticeReportStore(executor);
+    const claimSession = '223e4567-e89b-42d3-a456-426614174004';
+    const emptyClaimSession = '223e4567-e89b-42d3-a456-426614174005';
+    const failureSession = '223e4567-e89b-42d3-a456-426614174006';
+    const staleClaimSession = '223e4567-e89b-42d3-a456-426614174007';
+    await client.query(
+      "INSERT INTO lingualoop_language_practice_sessions (id, owner_id, level, topic, duration_minutes, status, expires_at) " +
+      "VALUES ($1, $2, 'B1', 'travel', 5, 'COMPLETED', now() + interval '1 hour'), " +
+      "($3, $2, 'A1', 'travel', 5, 'EXPIRED', now() - interval '1 hour'), " +
+      "($4, $2, 'A1', 'travel', 5, 'COMPLETED', now()), " +
+      "($5, $2, 'A1', 'travel', 5, 'COMPLETED', now())",
+      [claimSession, OWNER, emptyClaimSession, failureSession, staleClaimSession],
+    );
+    await client.query(
+      "INSERT INTO lingualoop_language_practice_turns (id, session_id, client_turn_id, sequence, status, transcript, assistant_response, completed_at, spanish_correction_evidence) " +
+      "VALUES ($1, $2, $3, 1, 'COMPLETED', 'We ate well.', 'Good.', now(), NULL), " +
+      "($4, $5, $6, 1, 'COMPLETED', 'They are kind.', 'Good.', now(), NULL), " +
+      "($7, $8, $9, 1, 'COMPLETED', 'I enjoy music.', 'Good.', now(), NULL)",
+      ['823e4567-e89b-42d3-a456-426614174000', claimSession, '923e4567-e89b-42d3-a456-426614174000',
+        '823e4567-e89b-42d3-a456-426614174001', staleClaimSession, '923e4567-e89b-42d3-a456-426614174001',
+        '823e4567-e89b-42d3-a456-426614174002', failureSession, '923e4567-e89b-42d3-a456-426614174002'],
+    );
+    await store.getOrCreate(OWNER, SESSION);
+    const historical = await store.beginAiReport(OWNER, SESSION);
+    assert.equal(historical.kind, 'existing');
+    assert.equal(historical.report.generatedWithAi, false);
+    assert.deepEqual(historical.report, await store.getOrCreate(OWNER, SESSION));
+
+    const emptyBegin = await store.beginAiReport(OWNER, emptyClaimSession);
+    assert.equal(emptyBegin.kind, 'no_evidence');
+    assert.equal(emptyBegin.report.generatedWithAi, false);
+    assert.equal(emptyBegin.report.corrections.length, 0);
+    assert.equal((await client.query(
+      'SELECT count(*)::int AS count FROM lingualoop_language_practice_report_claims WHERE session_id = $1',
+      [emptyClaimSession],
+    )).rows[0].count, 0);
+
+    const beginnings = await Promise.all([
+      store.beginAiReport(OWNER, claimSession), store.beginAiReport(OWNER, claimSession),
+    ]);
+    assert.equal(beginnings.filter((value) => value.kind === 'claimed').length, 1);
+    assert.equal(beginnings.filter((value) => value.kind === 'busy').length, 1);
+    const claimed = beginnings.find((value) => value.kind === 'claimed');
+    assert.equal(claimed.turns.length, 1);
+    assert.equal(claimed.topic, 'travel');
+    assert.equal(claimed.level, 'B1');
+    await assert.rejects(store.beginAiReport(OTHER_OWNER, claimSession), (error) =>
+      error instanceof LanguagePracticeReportAdmissionError && error.reason === 'not_found');
+
+    const failedClaim = await store.beginAiReport(OWNER, failureSession);
+    assert.equal(failedClaim.kind, 'claimed');
+    assert.equal(await store.releaseAiReport(OWNER, failureSession, failedClaim.token), true);
+    const retriedClaim = await store.beginAiReport(OWNER, failureSession);
+    assert.equal(retriedClaim.kind, 'claimed');
+    assert.notEqual(retriedClaim.token, failedClaim.token);
+
+    const staleClaim = await store.beginAiReport(OWNER, staleClaimSession);
+    assert.equal(staleClaim.kind, 'claimed');
+    await client.query(
+      'UPDATE lingualoop_language_practice_report_claims SET lease_expires_at = now() - interval \'1 second\' WHERE session_id = $1',
+      [staleClaimSession],
+    );
+    const replacement = await store.beginAiReport(OWNER, staleClaimSession);
+    assert.equal(replacement.kind, 'claimed');
+    assert.notEqual(replacement.token, staleClaim.token);
+    const aiContent = {
+      summary: 'A clear practice session.', corrections: [], strengths: ['Clear expression.'], recommendations: ['Keep practicing.'],
+    };
+    assert.equal(await store.finalizeAiReport(OWNER, staleClaimSession, staleClaim.token, aiContent), null);
+    const finalized = await store.finalizeAiReport(OWNER, staleClaimSession, replacement.token, aiContent);
+    assert.equal(finalized.generatedWithAi, true);
+    assert.deepEqual((await store.beginAiReport(OWNER, staleClaimSession)), { kind: 'existing', report: finalized });
+
     await assert.rejects(store.getOrCreate(OTHER_OWNER, SESSION), (error) =>
       error instanceof LanguagePracticeReportAdmissionError && error.reason === 'not_found');
     await assert.rejects(store.getOrCreate(OWNER, ACTIVE_SESSION), (error) =>
