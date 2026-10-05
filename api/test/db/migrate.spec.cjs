@@ -10,6 +10,7 @@ const names = [
   '003_auth_sessions.sql', '004_refresh_rotation.sql',
   '005_language_practice_sessions.sql', '006_language_practice_turns.sql',
   '007_language_practice_turn_lease.sql', '008_language_practice_reports.sql',
+  '009_language_practice_ai_reports.sql',
 ];
 const lock = 'lingualoop:schema-migrations';
 const migrationSql = names.map((name) => require('node:fs').readFileSync(path.join(migrationsDir, name), 'utf8'));
@@ -37,7 +38,7 @@ function fakeClient({ ledger = false, applied = [], collision = [], failOnSql } 
 
 test('applies ordered SQL under LinguaLoop advisory lock and closes the client', async () => {
   const fake = fakeClient();
-  assert.equal(await runLinguaLoopMigrations(fake.client, migrationsDir), 8);
+  assert.equal(await runLinguaLoopMigrations(fake.client, migrationsDir), 9);
   assert.deepEqual(fake.calls[0].sql, 'BEGIN');
   assert.deepEqual(fake.calls[1], {
     sql: 'SELECT pg_advisory_xact_lock(hashtext($1))', parameters: [lock],

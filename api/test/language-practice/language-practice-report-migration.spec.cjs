@@ -33,7 +33,7 @@ async function waitForPostgres(config) {
   throw new Error(`Disposable PostgreSQL did not become ready: ${lastError?.message ?? 'timeout'}`);
 }
 
-test('migration 008 enforces report ownership key, object content, and AI prohibition', {
+test('migration 009 allows AI-generated reports while preserving report constraints', {
   timeout: 180_000,
 }, async () => {
   let container;
@@ -51,7 +51,7 @@ test('migration 008 enforces report ownership key, object content, and AI prohib
       user: 'postgres', password: DISPOSABLE_PASSWORD, connectionTimeoutMillis: 1_000,
     };
     client = await waitForPostgres(config);
-    assert.equal(await runLinguaLoopMigrations(client, MIGRATIONS_DIR), 8);
+    assert.equal(await runLinguaLoopMigrations(client, MIGRATIONS_DIR), 9);
     await client.end();
     client = new Client(config);
     await client.connect();
@@ -89,11 +89,25 @@ test('migration 008 enforces report ownership key, object content, and AI prohib
       'INSERT INTO lingualoop_language_practice_reports (session_id, content) VALUES ($1, $2)',
       ['323e4567-e89b-42d3-a456-426614174001', JSON.stringify('not an object')],
     ));
-    await assert.rejects(client.query(
-      'INSERT INTO lingualoop_language_practice_reports (session_id, content, generated_with_ai) ' +
-        'VALUES ($1, $2, TRUE)',
-      ['323e4567-e89b-42d3-a456-426614174002', JSON.stringify({})],
-    ));
+    const AI_SESSION = '423e4567-e89b-42d3-a456-426614174000';
+    await client.query(
+      "INSERT INTO lingualoop_language_practice_sessions " +
+        "(id, owner_id, level, topic, duration_minutes, expires_at) " +
+        "VALUES ($1, $2, 'A1', 'travel', 5, now() + INTERVAL '1 hour')",
+      [AI_SESSION, OWNER],
+    );
+    const aiInserted = await client.query(
+      'INSERT INTO lingualoop_language_practice_reports ' +
+        '(session_id, content, generated_with_ai) VALUES ($1, $2, TRUE) ' +
+        'RETURNING generated_with_ai',
+      [AI_SESSION, JSON.stringify({})],
+    );
+    assert.equal(aiInserted.rows[0].generated_with_ai, true);
+    const historical = await client.query(
+      'SELECT generated_with_ai FROM lingualoop_language_practice_reports WHERE session_id = $1',
+      [SESSION],
+    );
+    assert.equal(historical.rows[0].generated_with_ai, false);
     await assert.rejects(client.query(
       'INSERT INTO lingualoop_language_practice_reports (session_id) VALUES ($1)',
       ['323e4567-e89b-42d3-a456-426614174003'],
