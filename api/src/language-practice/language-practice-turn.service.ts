@@ -48,7 +48,22 @@ export interface PracticeTurnAudio {
   mimeType: string;
 }
 
+export type PracticeTurnDiagnosticStage =
+  | 'reservation'
+  | 'context_history'
+  | 'stt'
+  | 'coach'
+  | 'tts'
+  | 'commit'
+  | 'reread'
+  | 'response_session';
+
+export interface PracticeTurnDiagnostics {
+  report(stage: PracticeTurnDiagnosticStage): void;
+}
+
 export interface PracticeTurnDependencies {
+  diagnostics?: PracticeTurnDiagnostics;
   turnStore: PracticeTurnStore;
   sessions: { getOwnedSession(ownerId: string, sessionId: string): Promise<OwnedPracticeContext | null> };
   /** Required owner-filtered store boundary; no empty-history default is allowed. */
@@ -69,11 +84,19 @@ export class PracticeTurnUnavailableError extends Error {
 
 /** Inert orchestration unit. All inference and persistence are explicit injected ports. */
 export class LanguagePracticeTurnService {
+  private readonly diagnostics: PracticeTurnDiagnostics;
+
   constructor(private readonly dependencies: PracticeTurnDependencies) {
     if (!dependencies?.turnStore || !dependencies.sessions || !dependencies.history ||
         !dependencies.speechToText || !dependencies.synthesis || !dependencies.coach) {
       throw new TypeError('All language-practice turn ports are required.');
     }
+    this.diagnostics = dependencies.diagnostics ?? { report: (stage) => console.error('language_practice_turn_failure', stage) };
+  }
+
+  /** Reports a controller-owned post-service failure without exposing request or error data. */
+  reportResponseSessionFailure(): void {
+    this.reportDiagnostic('response_session');
   }
 
   async processTurn(
@@ -89,6 +112,7 @@ export class LanguagePracticeTurnService {
 
     let admitted: PracticeTurn | undefined;
     let completionCommitted = false;
+    let stage: PracticeTurnDiagnosticStage = 'reservation';
     try {
       // Reservation is the owner check and idempotency gate; no inference/history port runs before it.
       const reservation = await this.dependencies.turnStore.reserveTurn(ownerId, sessionId, clientTurnId);
@@ -96,6 +120,7 @@ export class LanguagePracticeTurnService {
       admitted = reservation.turn;
       if (!admitted.leaseToken) throw new Error();
 
+      stage = 'context_history';
       const [context, history] = await Promise.all([
         this.dependencies.sessions.getOwnedSession(ownerId, sessionId),
         this.dependencies.history.getCompletedHistory(ownerId, sessionId),
@@ -104,7 +129,9 @@ export class LanguagePracticeTurnService {
           history.some((item) => !item || (item.role !== 'user' && item.role !== 'assistant') ||
             typeof item.content !== 'string' || item.content.length > MAX_HISTORY_CONTENT)) throw new Error();
 
+      stage = 'stt';
       const transcript = await this.dependencies.speechToText.transcribeBounded(audio.buffer, audio.mimeType);
+      stage = 'coach';
       const coaching = await this.dependencies.coach.respond({
         context: {
           targetLanguage: { code: 'en', label: 'English' },
@@ -115,15 +142,18 @@ export class LanguagePracticeTurnService {
         transcript,
         history,
       });
+      stage = 'tts';
       const wav = await this.dependencies.synthesis.synthesizeLocal(coaching.assistantResponse, 'en');
       if (!Buffer.isBuffer(wav) || wav.length === 0 || wav.length > 8 * 1024 * 1024) throw new Error();
       const evidence = JSON.stringify({ correctedPhrase: coaching.correctedPhrase, feedback: coaching.feedback });
+      stage = 'commit';
       const completion = await this.dependencies.turnStore.completeTurn(
         ownerId, sessionId, admitted.id, admitted.leaseToken, transcript, coaching.assistantResponse, evidence,
       );
       if (!completion) throw new Error();
       completionCommitted = true;
       // completeTurn returns only a boolean; a replayed owner-scoped read is the authoritative persisted result.
+      stage = 'reread';
       const persisted = await this.dependencies.turnStore.reserveTurn(ownerId, sessionId, clientTurnId);
       const completedTurn = persisted.turn;
       if (!persisted.replay || completedTurn.status !== 'COMPLETED' || completedTurn.id !== admitted.id ||
@@ -140,7 +170,16 @@ export class LanguagePracticeTurnService {
           // Preserve a generic error and never reveal provider or persistence details.
         }
       }
+      this.reportDiagnostic(stage);
       throw new PracticeTurnUnavailableError();
+    }
+  }
+
+  private reportDiagnostic(stage: PracticeTurnDiagnosticStage): void {
+    try {
+      this.diagnostics.report(stage);
+    } catch {
+      // Diagnostics are best-effort and cannot change the turn result or billing outcome.
     }
   }
 }

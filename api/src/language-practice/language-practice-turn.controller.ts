@@ -68,7 +68,13 @@ export class LanguagePracticeTurnController {
         buffer: file.buffer,
         mimeType: file.mimetype,
       });
-      const session = await this.getFreshSession(ownerId, sessionId);
+      let session;
+      try {
+        session = await this.getFreshSession(ownerId, sessionId);
+      } catch {
+        this.turnService.reportResponseSessionFailure();
+        throw new Error();
+      }
       const audioBase64 = result.audioWav ? result.audioWav.toString('base64') : null;
       return {
         id: result.turn.id,

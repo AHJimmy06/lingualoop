@@ -23,19 +23,24 @@ const row = {
 };
 
 async function createServer(t, overrides = {}) {
-  const calls = { create: [], session: [], completed: [], turns: [] };
+  const calls = { create: [], session: [], completed: [], turns: [], diagnostics: [] };
   class TestModule {}
   Module({
     controllers: [LanguagePracticeTurnController],
     providers: [
       { provide: LANGUAGE_PRACTICE_SESSION_STORE, useValue: {
         async createSession(owner, setup) { calls.create.push({ owner, setup }); return row; },
-        async getSession(owner, id) { calls.session.push({ owner, id }); return owner === ownerId && id === sessionId ? row : null; },
+        async getSession(owner, id) {
+          calls.session.push({ owner, id });
+          if (overrides.sessionFailure) throw new Error('SECRET response session sentinel');
+          return owner === ownerId && id === sessionId ? row : null;
+        },
       } },
       { provide: LANGUAGE_PRACTICE_TURN_STORE, useValue: { async listCompletedTurns(owner, id) {
         calls.completed.push({ owner, id }); return [{ sequence: 1, transcript: 'Hello', assistantResponse: 'Good!', completedAt: '2026-09-24T12:01:00.000Z' }];
       } } },
       { provide: LANGUAGE_PRACTICE_TURN_SERVICE, useValue: {
+        reportResponseSessionFailure() { calls.diagnostics.push('response_session'); },
         async processTurn(owner, id, client, audio) {
           calls.turns.push({ owner, id, client, audio, audioAtCall: Buffer.from(audio.buffer) });
           if (overrides.processTurn) return overrides.processTurn(owner, id, client, audio);
@@ -148,6 +153,15 @@ test('multipart caps reject oversized audio and extra fields/files', async (t) =
   });
   assert.equal(filesResponse.status, 400);
   assert.equal(calls.turns.length, 0, 'rejected uploads never reach turn processing');
+});
+
+test('fresh-session failures return generic 503 and emit only the fixed response stage code', async (t) => {
+  const { base, calls } = await createServer(t, { sessionFailure: true });
+  const response = await fetch(`${base}/language-practice/sessions/${sessionId}/turns`, { method: 'POST', headers: authHeaders, body: multipart() });
+  await assertStatus(response, 503);
+  const body = await response.text();
+  assert.doesNotMatch(body, /SECRET|response session sentinel|diagnostic/i);
+  assert.deepEqual(calls.diagnostics, ['response_session']);
 });
 
 test('replayed turns return null audio without paid inference fields', async (t) => {

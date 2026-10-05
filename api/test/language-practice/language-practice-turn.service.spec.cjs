@@ -120,9 +120,11 @@ test('post-completion reread must match the committed persisted turn and never f
   }
 });
 
-test('PROCESSING, COMPLETED, and FAILED replays return stored turn without history or inference', async () => {
+test('PROCESSING, COMPLETED, and FAILED replays return stored turn without history, inference, or diagnostics', async () => {
   for (const status of ['PROCESSING', 'COMPLETED', 'FAILED']) {
+    const diagnostics = [];
     const base = fixture();
+    base.service = new LanguagePracticeTurnService({ ...base.ports, diagnostics: { report: (stage) => diagnostics.push(stage) } });
     base.ports.turnStore.reserveTurn = async (...args) => {
       base.calls.reserve.push(args);
       return { turn: initialTurn(status), replay: true };
@@ -135,6 +137,7 @@ test('PROCESSING, COMPLETED, and FAILED replays return stored turn without histo
     assert.deepEqual(base.calls.reserve, [[OWNER, SESSION, CLIENT]]);
     for (const name of ['session', 'history', 'stt', 'coach', 'tts', 'complete', 'fail']) assert.equal(base.calls[name].length, 0, `${status}: ${name}`);
     assert.deepEqual([...input.buffer], [...Buffer.from('caller audio')]);
+    assert.deepEqual(diagnostics, []);
   }
 });
 
@@ -160,12 +163,56 @@ test('post-admission failures call fail once and expose only generic unavailable
   }
 });
 
-test('reserve failure does not mark unadmitted turn failed and preserves admission outcomes', async () => {
-  const { service, calls, ports } = fixture();
+test('unexpected failures emit one privacy-safe fixed stage code, including cleanup and reporter failures', async () => {
+  const cases = [
+    ['reservation', (ports) => { ports.turnStore.reserveTurn = async () => { throw new Error('SECRET reservation sentinel'); }; }],
+    ['context_history', (ports) => { ports.sessions.getOwnedSession = async () => { throw new Error('SECRET context sentinel'); }; }],
+    ['context_history', (ports) => { ports.history.getCompletedHistory = async () => { throw new Error('SECRET history sentinel'); }; }],
+    ['stt', (ports) => { ports.speechToText.transcribeBounded = async () => { throw new Error('SECRET stt sentinel'); }; }],
+    ['coach', (ports) => { ports.coach.respond = async () => { throw new Error('SECRET coach sentinel'); }; }],
+    ['tts', (ports) => { ports.synthesis.synthesizeLocal = async () => { throw new Error('SECRET tts sentinel'); }; }],
+    ['commit', (ports) => { ports.turnStore.completeTurn = async () => { throw new Error('SECRET commit sentinel'); }; }],
+    ['reread', (ports, calls) => { ports.turnStore.reserveTurn = async (...args) => {
+      calls.reserve.push(args);
+      if (calls.reserve.length === 1) return { turn: initialTurn(), replay: false };
+      throw new Error('SECRET reread sentinel');
+    }; }],
+  ];
+  for (const [stage, configure] of cases) {
+    const diagnostics = [];
+    const { calls, ports } = fixture();
+    configure(ports, calls);
+    const service = new LanguagePracticeTurnService({ ...ports, diagnostics: { report: (code) => diagnostics.push(code) } });
+    await assert.rejects(service.processTurn(OWNER, SESSION, CLIENT, audio()), PracticeTurnUnavailableError);
+    assert.deepEqual(diagnostics, [stage]);
+    assert.equal(JSON.stringify(diagnostics).includes('SECRET'), false);
+    assert.equal(calls.fail.length, stage === 'reservation' || stage === 'reread' ? 0 : 1);
+  }
+
+  const diagnostics = [];
+  const { service, ports, calls } = fixture();
+  const instrumented = new LanguagePracticeTurnService({ ...ports, diagnostics: { report: (code) => diagnostics.push(code) } });
+  ports.coach.respond = async () => { throw new Error('SECRET coach sentinel'); };
+  ports.turnStore.failTurn = async () => { calls.fail.push([]); throw new Error('SECRET cleanup sentinel'); };
+  await assert.rejects(instrumented.processTurn(OWNER, SESSION, CLIENT, audio()), PracticeTurnUnavailableError);
+  assert.deepEqual(diagnostics, ['coach']);
+
+  const throwingPorts = fixture().ports;
+  throwingPorts.coach.respond = async () => { throw new Error('SECRET coach sentinel'); };
+  const throwingReporter = new LanguagePracticeTurnService({ ...throwingPorts, diagnostics: { report() { throw new Error('SECRET reporter sentinel'); } } });
+  await assert.rejects(throwingReporter.processTurn(OWNER, SESSION, CLIENT, audio()), PracticeTurnUnavailableError);
+});
+
+test('reserve failure does not mark unadmitted turn failed and preserves admission outcomes without diagnostics', async () => {
+  const diagnostics = [];
+  const { calls, ports } = fixture();
+  const service = new LanguagePracticeTurnService({ ...ports, diagnostics: { report: (stage) => diagnostics.push(stage) } });
   ports.turnStore.reserveTurn = async () => { throw new Error('store detail'); };
   await assert.rejects(service.processTurn(OWNER, SESSION, CLIENT, audio()), PracticeTurnUnavailableError);
   assert.equal(calls.fail.length, 0);
   assert.equal(calls.coach.length, 0);
+  assert.deepEqual(diagnostics, ['reservation'], 'unexpected reservation failures are identified');
+  diagnostics.length = 0;
 
   for (const reason of ['not_found', 'session_expired', 'turn_in_progress']) {
     ports.turnStore.reserveTurn = async () => { throw new LanguagePracticeTurnAdmissionError(reason); };
@@ -177,6 +224,7 @@ test('reserve failure does not mark unadmitted turn failed and preserves admissi
   }
   assert.equal(calls.fail.length, 0);
   assert.equal(calls.coach.length, 0);
+  assert.deepEqual(diagnostics, []);
 });
 
 test('invalid UUID, MIME, and size fail before reserve and preserve caller audio', async () => {
