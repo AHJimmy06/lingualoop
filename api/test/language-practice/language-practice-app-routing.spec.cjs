@@ -41,11 +41,15 @@ for (const [key, value] of previousEnvironment) {
 }
 const { LanguagePracticeSessionController } = require('../../dist/language-practice/language-practice-session.controller.js');
 const { LanguagePracticeTurnController } = require('../../dist/language-practice/language-practice-turn.controller.js');
+const { LANGUAGE_PRACTICE_REPORT_SERVICE } = require('../../dist/language-practice/language-practice-session.providers.js');
 
 test('auth-only AppModule registers session creation without optional turn runtime', () => {
   const controllers = Reflect.getMetadata('controllers', AppModule);
   assert.ok(controllers.includes(LanguagePracticeSessionController));
   assert.ok(!controllers.includes(LanguagePracticeTurnController));
+  const providers = Reflect.getMetadata('providers', AppModule);
+  assert.ok(providers.some((provider) => provider && provider.provide === LANGUAGE_PRACTICE_REPORT_SERVICE),
+    'the report service is registered even without optional provider configuration');
 
   const method = LanguagePracticeSessionController.prototype.createSession;
   assert.equal(typeof method, 'function');

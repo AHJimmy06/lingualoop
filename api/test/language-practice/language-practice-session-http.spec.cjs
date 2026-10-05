@@ -7,7 +7,7 @@ const { LinguaLoopTokenService } = require('../../dist/auth/lingualoop-token.ser
 const { LINGUALOOP_IDENTITY_STORE, LINGUALOOP_SESSION_STORE } = require('../../dist/auth/auth-store.providers.js');
 const { InvalidBearerTokenError } = require('../../dist/auth/verified-request.guard.js');
 const { LanguagePracticeSessionController } = require('../../dist/language-practice/language-practice-session.controller.js');
-const { LANGUAGE_PRACTICE_SESSION_STORE } = require('../../dist/language-practice/language-practice-session.providers.js');
+const { LANGUAGE_PRACTICE_SESSION_STORE, LANGUAGE_PRACTICE_REPORT_SERVICE } = require('../../dist/language-practice/language-practice-session.providers.js');
 
 const token = 'test-access-token';
 const ownerId = '550e8400-e29b-41d4-a716-446655440000';
@@ -51,7 +51,7 @@ async function createServer(t, turnStore = { async listCompletedTurns(owner, id)
           turnCalls.push({ owner, id });
           return turnStore.listCompletedTurns(owner, id);
         } } },
-      { provide: require('../../dist/language-practice/language-practice-session.providers.js').LANGUAGE_PRACTICE_REPORT_STORE,
+      { provide: LANGUAGE_PRACTICE_REPORT_SERVICE,
         useValue: { async getOrCreate(owner, id) {
           reportCalls.push({ owner, id });
           if (reportStore) return reportStore.getOrCreate(owner, id);
@@ -232,14 +232,14 @@ test('active sessions return conflict and report store failures remain generic',
   assert.deepEqual(await conflict.json(), { statusCode: 409, message: 'Session is not closed.' });
 
   const failed = await createServer(t, undefined, {
-    reportStore: { async getOrCreate() { throw new Error('private database and report data'); } },
+    reportStore: { async getOrCreate() { throw new Error('provider secret and private report data'); } },
   });
   const response = await fetch(`${failed.base}/language-practice/sessions/${sessionId}/report`, { method: 'POST', headers: authHeaders });
   assert.equal(response.status, 503);
   assert.equal(response.headers.get('cache-control'), 'private, no-store');
   const body = await response.text();
   assert.deepEqual(JSON.parse(body), { statusCode: 503, message: 'Language practice report is unavailable.' });
-  assert.doesNotMatch(body, /private database|report data/);
+  assert.doesNotMatch(body, /private database|report data|provider secret/);
 });
 
 test('completed turn store failures return a generic unavailable response', async (t) => {

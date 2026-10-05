@@ -8,11 +8,12 @@ import {
   LanguagePracticeSessionStore,
 } from './language-practice-session-store';
 import {
-  LANGUAGE_PRACTICE_REPORT_STORE,
+  LANGUAGE_PRACTICE_REPORT_SERVICE,
   LANGUAGE_PRACTICE_SESSION_STORE,
   LANGUAGE_PRACTICE_TURN_STORE,
 } from './language-practice-session.providers';
-import { LanguagePracticeReportAdmissionError, LanguagePracticeReportStore } from './language-practice-report-store';
+import { LanguagePracticeReportAdmissionError } from './language-practice-report-store';
+import { LanguagePracticeReportService } from './language-practice-report.service';
 import { LanguagePracticeTurnStore } from './language-practice-turn-store';
 import type { LanguagePracticeSetup } from './language-practice-session-store';
 
@@ -39,7 +40,7 @@ type VerifiedRequest = { verifiedIdentity?: { ownerId: string } };
 
 type SessionStore = Pick<LanguagePracticeSessionStore, 'createSession' | 'getSession' | 'finishSession'>;
 type TurnStore = Pick<LanguagePracticeTurnStore, 'listCompletedTurns'>;
-type ReportStore = Pick<LanguagePracticeReportStore, 'getOrCreate'>;
+type ReportService = Pick<LanguagePracticeReportService, 'getOrCreate'>;
 
 @Controller('language-practice')
 @UseGuards(ConfiguredVerifiedRequestGuard)
@@ -47,7 +48,7 @@ export class LanguagePracticeSessionController {
   constructor(
     @Inject(LANGUAGE_PRACTICE_SESSION_STORE) private readonly sessions: SessionStore,
     @Inject(LANGUAGE_PRACTICE_TURN_STORE) private readonly turns: TurnStore,
-    @Inject(LANGUAGE_PRACTICE_REPORT_STORE) private readonly reports: ReportStore,
+    @Inject(LANGUAGE_PRACTICE_REPORT_SERVICE) private readonly reports: ReportService,
   ) {}
 
   @Get('options')
