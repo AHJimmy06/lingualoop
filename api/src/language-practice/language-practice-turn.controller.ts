@@ -15,10 +15,6 @@ import { FileInterceptor } from '@nestjs/platform-express';
 const { memoryStorage } = require('multer') as { memoryStorage: () => unknown };
 import { ConfiguredVerifiedRequestGuard } from '../auth/google-auth.providers';
 import {
-  LANGUAGE_PRACTICE_DURATIONS_MINUTES,
-  LANGUAGE_PRACTICE_LEVELS,
-  LANGUAGE_PRACTICE_TOPICS,
-  type LanguagePracticeSetup,
   LanguagePracticeSessionStore,
 } from './language-practice-session-store';
 import { LANGUAGE_PRACTICE_SESSION_STORE, LANGUAGE_PRACTICE_TURN_STORE } from './language-practice-session.providers';
@@ -34,7 +30,7 @@ import { LANGUAGE_PRACTICE_TURN_SERVICE } from './language-practice-turn.provide
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 type VerifiedRequest = { verifiedIdentity?: { ownerId: string } };
 type UploadedAudio = { buffer: Buffer; mimetype: string };
-type SessionStore = Pick<LanguagePracticeSessionStore, 'createSession' | 'getSession'>;
+type SessionStore = Pick<LanguagePracticeSessionStore, 'getSession'>;
 type TurnStore = Pick<LanguagePracticeTurnStore, 'listCompletedTurns'>;
 
 @Controller('language-practice')
@@ -45,26 +41,6 @@ export class LanguagePracticeTurnController {
     @Inject(LANGUAGE_PRACTICE_TURN_STORE) private readonly turns: TurnStore,
     @Inject(LANGUAGE_PRACTICE_TURN_SERVICE) private readonly turnService: LanguagePracticeTurnService,
   ) {}
-
-  @Post('sessions')
-  async createSession(@Body() body: unknown, @Req() request: VerifiedRequest) {
-    const ownerId = this.ownerId(request);
-    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new BadRequestException('Invalid session setup.');
-    const setup = body as Record<string, unknown>;
-    if (!(LANGUAGE_PRACTICE_LEVELS as readonly unknown[]).includes(setup.level) ||
-        !(LANGUAGE_PRACTICE_TOPICS as readonly unknown[]).includes(setup.topic) ||
-        !(LANGUAGE_PRACTICE_DURATIONS_MINUTES as readonly unknown[]).includes(setup.durationMinutes) ||
-        Object.keys(setup).some((key) => !['level', 'topic', 'durationMinutes'].includes(key))) {
-      throw new BadRequestException('Invalid session setup.');
-    }
-    let session;
-    try {
-      session = await this.sessions.createSession(ownerId, setup as unknown as LanguagePracticeSetup);
-    } catch {
-      throw new HttpException('Language practice session is unavailable.', 503);
-    }
-    return { ...session, turns: [] };
-  }
 
   @Post('sessions/:sessionId/turns')
   @UseInterceptors(FileInterceptor('audio', {

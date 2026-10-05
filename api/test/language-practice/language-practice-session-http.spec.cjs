@@ -30,10 +30,16 @@ async function createServer(t, turnStore = { async listCompletedTurns(owner, id)
   Module({
     controllers: [LanguagePracticeSessionController],
     providers: [
-      { provide: LANGUAGE_PRACTICE_SESSION_STORE, useValue: { async getSession(owner, id) {
-        calls.push({ owner, id });
-        return owner === ownerId && id === sessionId ? row : null;
-      } } },
+      { provide: LANGUAGE_PRACTICE_SESSION_STORE, useValue: {
+        async createSession(owner, setup) {
+          calls.push({ owner, setup });
+          return row;
+        },
+        async getSession(owner, id) {
+          calls.push({ owner, id });
+          return owner === ownerId && id === sessionId ? row : null;
+        },
+      } },
       { provide: require('../../dist/language-practice/language-practice-session.providers.js').LANGUAGE_PRACTICE_TURN_STORE,
         useValue: { async listCompletedTurns(owner, id) {
           turnCalls.push({ owner, id });
@@ -84,6 +90,18 @@ test('options are protected and preserve the original catalog labels and limits'
     maxFileSizeBytes: 2097152,
     maxDurationMs: 20000,
   });
+});
+
+test('session creation is protected, validates the catalog, and uses verified owner identity', async (t) => {
+  const { base, calls } = await createServer(t);
+  const endpoint = `${base}/language-practice/sessions`;
+  assert.equal((await fetch(endpoint, { method: 'POST', body: JSON.stringify({ level: 'B1', topic: 'travel', durationMinutes: 10 }) })).status, 401);
+  const invalid = await fetch(endpoint, { method: 'POST', headers: { ...authHeaders, 'content-type': 'application/json' }, body: JSON.stringify({ level: 'X', topic: 'travel', durationMinutes: 10 }) });
+  assert.equal(invalid.status, 400);
+  const response = await fetch(endpoint, { method: 'POST', headers: { ...authHeaders, 'content-type': 'application/json' }, body: JSON.stringify({ level: 'B1', topic: 'travel', durationMinutes: 10 }) });
+  assert.equal(response.status, 201);
+  assert.deepEqual(await response.json(), { ...row, turns: [] });
+  assert.deepEqual(calls, [{ owner: ownerId, setup: { level: 'B1', topic: 'travel', durationMinutes: 10 } }]);
 });
 
 test('session detail is protected and returns owner-scoped completed turns', async (t) => {

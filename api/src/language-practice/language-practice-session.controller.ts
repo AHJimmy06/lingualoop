@@ -1,4 +1,4 @@
-import { Controller, Get, HttpCode, HttpException, Inject, Param, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, HttpCode, HttpException, Inject, Param, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { ConfiguredVerifiedRequestGuard } from '../auth/google-auth.providers';
 import {
   LANGUAGE_PRACTICE_DURATIONS_MINUTES,
@@ -13,6 +13,7 @@ import {
 } from './language-practice-session.providers';
 import { LanguagePracticeReportAdmissionError, LanguagePracticeReportStore } from './language-practice-report-store';
 import { LanguagePracticeTurnStore } from './language-practice-turn-store';
+import type { LanguagePracticeSetup } from './language-practice-session-store';
 
 const INPUT_LANGUAGE = { code: 'en', label: 'English' };
 const OUTPUT_LANGUAGES = [
@@ -35,7 +36,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 
 type VerifiedRequest = { verifiedIdentity?: { ownerId: string } };
 
-type SessionStore = Pick<LanguagePracticeSessionStore, 'getSession'>;
+type SessionStore = Pick<LanguagePracticeSessionStore, 'createSession' | 'getSession'>;
 type TurnStore = Pick<LanguagePracticeTurnStore, 'listCompletedTurns'>;
 type ReportStore = Pick<LanguagePracticeReportStore, 'getOrCreate'>;
 
@@ -83,6 +84,28 @@ export class LanguagePracticeSessionController {
       }
       throw new HttpException('Language practice report is unavailable.', 503);
     }
+  }
+
+  @Post('sessions')
+  async createSession(@Body() body: unknown, @Req() request: VerifiedRequest) {
+    if (!request.verifiedIdentity || typeof request.verifiedIdentity.ownerId !== 'string') {
+      throw new HttpException('Authentication service unavailable.', 503);
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new BadRequestException('Invalid session setup.');
+    const setup = body as Record<string, unknown>;
+    if (!(LANGUAGE_PRACTICE_LEVELS as readonly unknown[]).includes(setup.level) ||
+        !(LANGUAGE_PRACTICE_TOPICS as readonly unknown[]).includes(setup.topic) ||
+        !(LANGUAGE_PRACTICE_DURATIONS_MINUTES as readonly unknown[]).includes(setup.durationMinutes) ||
+        Object.keys(setup).some((key) => !['level', 'topic', 'durationMinutes'].includes(key))) {
+      throw new BadRequestException('Invalid session setup.');
+    }
+    let session;
+    try {
+      session = await this.sessions.createSession(request.verifiedIdentity.ownerId, setup as unknown as LanguagePracticeSetup);
+    } catch {
+      throw new HttpException('Language practice session is unavailable.', 503);
+    }
+    return { ...session, turns: [] };
   }
 
   @Get('sessions/:sessionId')

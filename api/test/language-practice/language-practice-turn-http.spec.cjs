@@ -85,17 +85,6 @@ test('missing verified identity still wipes an already parsed upload', async () 
   assert.deepEqual(buffer, Buffer.alloc(buffer.length));
 });
 
-test('session creation is protected, validates the catalog, and uses verified owner identity', async (t) => {
-  const { base, calls } = await createServer(t);
-  assert.equal((await fetch(`${base}/language-practice/sessions`, { method: 'POST', body: JSON.stringify({ level: 'B1', topic: 'travel', durationMinutes: 10 }) })).status, 401);
-  const invalid = await fetch(`${base}/language-practice/sessions`, { method: 'POST', headers: { ...authHeaders, 'content-type': 'application/json' }, body: JSON.stringify({ level: 'X', topic: 'travel', durationMinutes: 10 }) });
-  assert.equal(invalid.status, 400);
-  const response = await fetch(`${base}/language-practice/sessions`, { method: 'POST', headers: { ...authHeaders, 'content-type': 'application/json' }, body: JSON.stringify({ level: 'B1', topic: 'travel', durationMinutes: 10 }) });
-  await assertStatus(response, 201);
-  assert.deepEqual(await response.json(), { ...row, turns: [] });
-  assert.deepEqual(calls.create, [{ owner: ownerId, setup: { level: 'B1', topic: 'travel', durationMinutes: 10 } }]);
-});
-
 test('multipart turns return original turn fields and fresh owner-scoped detail, then wipe uploaded audio', async (t) => {
   const { base, calls } = await createServer(t);
   const denied = await fetch(`${base}/language-practice/sessions/${sessionId}/turns`, { method: 'POST', body: multipart() });
