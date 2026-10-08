@@ -15,6 +15,7 @@ import { anchorTimer, projectRemainingMs, type TimerAnchor } from './live-sessio
 import { LiveTurnController } from './react-live-turn';
 import { ResponseAudioUrls } from './react-live-audio';
 import { PracticeRecorder } from './PracticeRecorder';
+import { PracticeScene } from './PracticeScene';
 
 const topicLabels: Record<string, string> = {
   travel: 'Travel', work: 'Work', studies: 'Studies', 'everyday-conversation': 'Everyday conversation',
@@ -266,6 +267,8 @@ export function LivePracticeView() {
           <p><strong>Topic</strong> <span className="text-muted-foreground">{topicLabels[session.topic] || session.topic}</span></p>
           <p><strong>Duration</strong> <span className="text-muted-foreground">{session.durationMinutes} minutes</span></p>
         </section>
+
+        <PracticeScene topic={session.topic} />
 
         <section aria-labelledby="conversation-title" className="mb-8">
           <h2 id="conversation-title" className="mb-4 text-lg font-semibold">Conversation so far</h2>
