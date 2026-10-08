@@ -7,16 +7,18 @@ import {
   MAX_RECORDING_MS,
 } from './practice-recorder-guards';
 import { RecordingBuffer } from './react-recorder-state';
+import { SpeakingEventState } from './react-live-audio';
 
 type PracticeRecorderProps = {
   disabled?: boolean;
   onRecorded: (blob: Blob) => void;
   onBusyChange?: (busy: boolean) => void;
+  onRecordingChange?: (recording: boolean) => void;
 };
 
 const failureMessage = 'Recording could not be completed. Please try again.';
 
-export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange }: PracticeRecorderProps) {
+export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, onRecordingChange }: PracticeRecorderProps) {
   const [recording, setRecording] = useState(false);
   const [starting, setStarting] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -32,6 +34,9 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange }:
   const startedAtRef = useRef(0);
   const requestedDurationRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const onRecordingChangeRef = useRef(onRecordingChange);
+  const speakingDetachRef = useRef<(() => void) | null>(null);
+  onRecordingChangeRef.current = onRecordingChange;
 
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) clearInterval(timerRef.current);
@@ -52,6 +57,8 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange }:
     if (recorder && recorder.state !== 'inactive') {
       try { recorder.stop(); } catch { /* Best-effort cancellation. */ }
     }
+    speakingDetachRef.current?.();
+    speakingDetachRef.current = null;
     releaseTracks();
     bufferRef.current = null;
     requestedDurationRef.current = null;
@@ -102,12 +109,16 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange }:
       bufferRef.current = buffer;
       const recorder = new MediaRecorder(acquiredStream, { mimeType });
       recorderRef.current = recorder;
+      const activity = new SpeakingEventState((isSpeaking) => onRecordingChangeRef.current?.(isSpeaking), 'start', ['stop', 'error']);
+      speakingDetachRef.current = activity.attach(recorder);
       recorder.addEventListener('dataavailable', (event: BlobEvent) => {
         if (operation === operationRef.current && !disposedRef.current) buffer.add(event.data);
       });
       recorder.addEventListener('stop', () => {
         if (operation !== operationRef.current || disposedRef.current) return;
         clearTimer();
+        speakingDetachRef.current?.();
+        speakingDetachRef.current = null;
         const duration = requestedDurationRef.current ?? performance.now() - startedAtRef.current;
         const blob = buffer.finish(duration, recorder.mimeType);
         bufferRef.current = null;
@@ -135,6 +146,7 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange }:
       acquiredStream?.getTracks().forEach((track) => track.stop());
       if (!disposedRef.current && operation === operationRef.current) {
         setError('Microphone unavailable. Check permission and try again.');
+        cancel();
       }
     } finally {
       if (!disposedRef.current && operation === operationRef.current) {

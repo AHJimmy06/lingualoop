@@ -13,7 +13,7 @@ import {
 } from './language-practice-client';
 import { anchorTimer, projectRemainingMs, type TimerAnchor } from './live-session-state';
 import { LiveTurnController } from './react-live-turn';
-import { ResponseAudioUrls } from './react-live-audio';
+import { onRecordingActivity, ResponseAudioPlayback, ResponseAudioUrls } from './react-live-audio';
 import { PracticeRecorder } from './PracticeRecorder';
 import { PracticeScene } from './PracticeScene';
 
@@ -27,6 +27,8 @@ export function LivePracticeView() {
   const client = useMemo(() => new LanguagePracticeClient(authSession), []);
   const turnController = useMemo(() => new LiveTurnController(), [sessionId]);
   const audioController = useRef(new ResponseAudioUrls());
+  const audioPlayback = useRef<ResponseAudioPlayback | null>(null);
+  if (!audioPlayback.current) audioPlayback.current = new ResponseAudioPlayback((speaking) => setPartnerSpeaking(speaking));
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -36,6 +38,8 @@ export function LivePracticeView() {
   const [submitting, setSubmitting] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [recorderBusy, setRecorderBusy] = useState(false);
+  const [learnerSpeaking, setLearnerSpeaking] = useState(false);
+  const [partnerSpeaking, setPartnerSpeaking] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [playbackError, setPlaybackError] = useState('');
   const [clock, setClock] = useState({ now: 0, anchor: null as TimerAnchor | null });
@@ -103,6 +107,8 @@ export function LivePracticeView() {
     setSubmitting(false);
     setFinishing(false);
     setRecorderBusy(false);
+    setLearnerSpeaking(false);
+    audioPlayback.current?.clear();
     finishInFlight.current = false;
     setAudioUrl(null);
     audioController.current.clear();
@@ -112,6 +118,8 @@ export function LivePracticeView() {
     navigatingToCompletion.current = false;
     void loadSession();
     return () => {
+      audioElement.current?.pause();
+      audioPlayback.current?.clear();
       audioController.current.clear();
     };
   }, [loadSession]);
@@ -152,6 +160,18 @@ export function LivePracticeView() {
       }
     });
     return () => { activeEffect = false; };
+  }, [audioUrl]);
+
+  useEffect(() => {
+    if (!audioUrl || !audioElement.current) {
+      audioPlayback.current?.clear();
+      return;
+    }
+    const detach = audioPlayback.current?.attach(audioElement.current);
+    return () => {
+      audioElement.current?.pause();
+      detach?.();
+    };
   }, [audioUrl]);
 
   const checkSameTurn = async (automatic: boolean) => {
@@ -209,6 +229,7 @@ export function LivePracticeView() {
   };
 
   const replayAudio = async () => {
+    if (recorderBusy) return;
     setPlaybackError('');
     const played = await audioController.current.replay(async () => {
       if (!audioElement.current) throw new Error('Audio element is not ready');
@@ -218,6 +239,9 @@ export function LivePracticeView() {
   };
 
   const onRecorderBusyChange = useCallback((busy: boolean) => setRecorderBusy(busy), []);
+  const onRecordingChange = useCallback((recording: boolean) => {
+    onRecordingActivity(recording, audioElement.current, setLearnerSpeaking, () => setPartnerSpeaking(false), audioPlayback.current!);
+  }, []);
 
   const finishPractice = async () => {
     if (finishInFlight.current || !active || turnController.pending || submitting || recorderBusy || sessionIdRef.current !== sessionId) return;
@@ -268,7 +292,11 @@ export function LivePracticeView() {
           <p><strong>Duration</strong> <span className="text-muted-foreground">{session.durationMinutes} minutes</span></p>
         </section>
 
-        <PracticeScene topic={session.topic} />
+        <PracticeScene
+          topic={session.topic}
+          learnerState={learnerSpeaking ? 'speaking' : partnerSpeaking ? 'listening' : 'idle'}
+          partnerState={partnerSpeaking ? 'speaking' : learnerSpeaking ? 'listening' : 'idle'}
+        />
 
         <section aria-labelledby="conversation-title" className="mb-8">
           <h2 id="conversation-title" className="mb-4 text-lg font-semibold">Conversation so far</h2>
@@ -282,7 +310,7 @@ export function LivePracticeView() {
                     <MessageContent><MessageHeader>You</MessageHeader><Bubble variant="tinted"><BubbleContent>{turn.transcript || 'No transcript was saved for this turn.'}</BubbleContent></Bubble></MessageContent>
                   </Message>
                   <Message align="start">
-                    <MessageContent><MessageHeader>Conversation partner</MessageHeader><Bubble variant="secondary"><BubbleContent>{turn.assistantResponse || 'No response text was saved for this turn.'}</BubbleContent></Bubble>{index === session.turns.length - 1 && audioUrl && <Button type="button" variant="ghost" size="icon" className="mt-1" title="Replay response" onClick={() => void replayAudio()} aria-label="Replay response"><Volume2 aria-hidden="true" /></Button>}</MessageContent>
+                    <MessageContent><MessageHeader>Conversation partner</MessageHeader><Bubble variant="secondary"><BubbleContent>{turn.assistantResponse || 'No response text was saved for this turn.'}</BubbleContent></Bubble>{index === session.turns.length - 1 && audioUrl && <Button type="button" variant="ghost" size="icon" className="mt-1" title="Replay response" disabled={recorderBusy} onClick={() => void replayAudio()} aria-label="Replay response"><Volume2 aria-hidden="true" /></Button>}</MessageContent>
                   </Message>
                 </MessageGroup>
               </li>)}
@@ -295,7 +323,7 @@ export function LivePracticeView() {
             : <p className="max-w-md text-center text-sm leading-6 text-muted-foreground">{active
               ? 'When you are ready, record your response.'
               : 'This session has expired. You can no longer record a new turn.'}</p>}
-          {!turnController.pending && <PracticeRecorder key={sessionId} disabled={!active} onRecorded={onRecorded} onBusyChange={onRecorderBusyChange} />}
+          {!turnController.pending && <PracticeRecorder key={sessionId} disabled={!active} onRecorded={onRecorded} onBusyChange={onRecorderBusyChange} onRecordingChange={onRecordingChange} />}
           {turnController.pending && <Button type="button" variant="outline" disabled={submitting} onClick={() => void checkSameTurn(false)}>
             {submitting ? 'Checking…' : 'Check for response'}
           </Button>}

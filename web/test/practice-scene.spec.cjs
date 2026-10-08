@@ -40,6 +40,19 @@ test('scene presents two accessible participant figures and defaults both to neu
   assert.ok(figures.every((figure) => figure.props.role === 'group' && figure.props['aria-label']));
 });
 
+test('speaking and listening states get distinct visible, reduced-motion-safe treatments while figures remain replaceable', () => {
+  const scene = PracticeScene({ topic: 'work', learnerState: 'speaking', partnerState: 'listening' });
+  const figures = scene.props.children[1].props.children.map((figure) => figure.type(figure.props));
+  const learner = figures[0].props.children.filter(Boolean);
+  const partner = figures[1].props.children.filter(Boolean);
+  assert.match(learner[0].props.className, /motion-safe:animate-pulse/);
+  assert.equal(learner[0].props.children, '••• )))');
+  assert.equal(partner[0].props.children, '◖ Listening');
+  assert.match(learner[1].props.src, /learner-figure\.svg$/);
+  assert.match(partner[1].props.src, /partner-figure\.svg$/);
+  assert.match(learner[1].props.className, /motion-reduce:transition-none/);
+});
+
 test('scene reflects supplied participant presentation states without requiring event wiring', () => {
   const scene = PracticeScene({ topic: 'work', learnerState: 'speaking', partnerState: 'listening' });
   const figures = scene.props.children[1].props.children.map((figure) => figure.type(figure.props));

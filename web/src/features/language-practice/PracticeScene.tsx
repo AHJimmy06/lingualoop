@@ -24,7 +24,9 @@ export function getPracticeScene(topic: string): PracticeSceneDetails {
 
 function Participant({ name, figure, state }: { name: string; figure: 'learner' | 'partner'; state: ParticipantState }) {
   return (
-    <div role="group" className="flex min-w-0 flex-1 flex-col items-center justify-end" data-state={state} aria-label={`${name} — ${state}`}>
+    <div role="group" className="relative flex min-w-0 flex-1 flex-col items-center justify-end" data-state={state} aria-label={`${name} — ${state}`}>
+      {state === 'speaking' && <span aria-hidden="true" className="absolute bottom-20 z-10 rounded-2xl border border-primary/30 bg-background px-3 py-1 text-sm font-bold tracking-widest text-primary shadow-md motion-safe:animate-pulse sm:bottom-28 sm:text-base">••• )))</span>}
+      {state === 'listening' && <span aria-hidden="true" className="absolute bottom-20 z-10 rounded-full border border-sky-600/30 bg-background px-3 py-1 text-[11px] font-semibold text-sky-800 shadow-sm dark:text-sky-200 sm:bottom-28 sm:text-xs">◖ Listening</span>}
       <img
         className={`h-24 w-24 object-contain sm:h-32 sm:w-32 motion-safe:transition-transform motion-reduce:transition-none ${state === 'speaking' ? '-translate-y-1' : ''}`}
         src={`/images/scenes/${figure}-figure.svg`}
