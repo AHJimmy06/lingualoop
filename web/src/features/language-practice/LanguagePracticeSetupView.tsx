@@ -4,6 +4,7 @@ import { authSession } from '../../auth-session';
 import { Button } from '../../components/ui/button';
 import { LanguagePracticeClient, type PracticeSetup } from './language-practice-client';
 import { fetchPracticeOptions, type PracticeOptions } from './practice-options';
+import { getPracticeScene } from './PracticeScene';
 
 export function isPracticeSetupValid(
   options: PracticeOptions | null,
@@ -108,22 +109,31 @@ export function LanguagePracticeSetupView() {
           <p>{error}</p>
           <Button type="button" variant="outline" className="mt-4" onClick={() => void loadOptions()}>Try again</Button>
         </div>}
-        {!loading && !error && options && <div className="grid gap-4">
-          <label className="grid gap-2 text-sm font-medium" htmlFor="practice-level">English level
-            <select id="practice-level" className="h-11 w-full rounded-md border bg-background px-3 font-normal" value={level} onChange={(event) => setLevel(event.target.value)}>
-              {options.levels.map((item) => <option key={item} value={item}>{item}</option>)}
-            </select>
-          </label>
-          <label className="grid gap-2 text-sm font-medium" htmlFor="practice-topic">Conversation topic
-            <select id="practice-topic" className="h-11 w-full rounded-md border bg-background px-3 font-normal" value={topic} onChange={(event) => setTopic(event.target.value)}>
-              {options.topics.map((item) => <option key={item.code} value={item.code}>{item.label}</option>)}
-            </select>
-          </label>
-          <label className="grid gap-2 text-sm font-medium" htmlFor="practice-duration">Practice duration
-            <select id="practice-duration" className="h-11 w-full rounded-md border bg-background px-3 font-normal" value={duration ?? ''} onChange={(event) => setDuration(Number(event.target.value) || null)}>
-              {options.durationsMinutes.map((item) => <option key={item} value={item}>{item} minutes</option>)}
-            </select>
-          </label>
+        {!loading && !error && options && <div className="grid gap-5">
+          <section className="relative isolate flex min-h-64 items-end overflow-hidden rounded-xl border bg-muted sm:min-h-80" aria-label={`${options.topics.find((item) => item.code === topic)?.label ?? getPracticeScene(topic).label} practice preview`}>
+            <img className="absolute inset-0 -z-10 h-full w-full object-cover" src={getPracticeScene(topic).image} alt="" aria-hidden="true" />
+            <div className="w-full bg-gradient-to-t from-black/75 via-black/25 to-transparent px-5 pb-5 pt-16 sm:px-7 sm:pb-7">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-white/80">Practice scene</p>
+              <h3 className="mt-1 text-2xl font-semibold text-white drop-shadow sm:text-3xl">{options.topics.find((item) => item.code === topic)?.label ?? getPracticeScene(topic).label}</h3>
+            </div>
+          </section>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <label className="grid gap-2 text-sm font-medium" htmlFor="practice-topic">Conversation topic
+              <select id="practice-topic" className="h-11 w-full rounded-md border bg-background px-3 font-normal" value={topic} onChange={(event) => setTopic(event.target.value)}>
+                {options.topics.map((item) => <option key={item.code} value={item.code}>{item.label}</option>)}
+              </select>
+            </label>
+            <label className="grid gap-2 text-sm font-medium" htmlFor="practice-level">English level
+              <select id="practice-level" className="h-11 w-full rounded-md border bg-background px-3 font-normal" value={level} onChange={(event) => setLevel(event.target.value)}>
+                {options.levels.map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+            </label>
+            <label className="grid gap-2 text-sm font-medium" htmlFor="practice-duration">Practice duration
+              <select id="practice-duration" className="h-11 w-full rounded-md border bg-background px-3 font-normal" value={duration ?? ''} onChange={(event) => setDuration(Number(event.target.value) || null)}>
+                {options.durationsMinutes.map((item) => <option key={item} value={item}>{item} minutes</option>)}
+              </select>
+            </label>
+          </div>
           {creationError && <p className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm" role="alert">{creationError}</p>}
           <Button type="button" size="lg" className="mt-1 w-full sm:w-auto sm:justify-self-start" disabled={creating || !canStart} onClick={() => void startPractice()}>
             {creating ? 'Starting practice…' : 'Start practice'}
