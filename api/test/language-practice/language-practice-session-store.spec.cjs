@@ -15,6 +15,7 @@ const createdRow = {
   level: 'B1',
   topic: 'travel',
   durationMinutes: 10,
+  difficulty: 'medium',
   startedAt: new Date('2026-09-24T12:00:00.000Z'),
   expiresAt: new Date('2026-09-24T12:10:00.000Z'),
   remainingMs: 600000,
@@ -45,15 +46,16 @@ test('creates an original-catalog session with owner binding and database-derive
     level: 'B1',
     topic: 'travel',
     durationMinutes: 10,
+    difficulty: 'medium',
     startedAt: '2026-09-24T12:00:00.000Z',
     expiresAt: '2026-09-24T12:10:00.000Z',
     remainingMs: 600000,
     turnInProgress: false,
   });
   assert.match(fake.calls[0].sql, /INSERT INTO lingualoop_language_practice_sessions/i);
-  assert.match(fake.calls[0].sql, /VALUES \(\$1, \$2, \$3, \$4, NOW\(\), NOW\(\) \+ \$4 \* INTERVAL '1 minute'\)/i);
-  assert.match(fake.calls[0].sql, /RETURNING id, status, level, topic,\s+duration_minutes AS "durationMinutes",\s+started_at AS "startedAt", expires_at AS "expiresAt",\s+duration_minutes \* 60000 AS "remainingMs"/i);
-  assert.deepEqual(fake.calls[0].parameters, [OWNER_ID, 'B1', 'travel', 10]);
+  assert.match(fake.calls[0].sql, /VALUES \(\$1, \$2, \$3, \$4, \$5, NOW\(\), NOW\(\) \+ \$4::integer \* INTERVAL '1 minute'\)/i);
+  assert.match(fake.calls[0].sql, /RETURNING id, status, level, topic, difficulty,\s+duration_minutes AS "durationMinutes",\s+started_at AS "startedAt", expires_at AS "expiresAt",\s+duration_minutes \* 60000 AS "remainingMs"/i);
+  assert.deepEqual(fake.calls[0].parameters, [OWNER_ID, 'B1', 'travel', 10, 'medium']);
   assert.ok(!fake.calls[0].sql.includes(OWNER_ID));
 });
 
@@ -92,6 +94,23 @@ test('malformed query results and database diagnostics fail with a generic store
   await assert.rejects(fakeExecutor(null, new Error(secret)).store.createSession(OWNER_ID, {
     level: 'B1', topic: 'travel', durationMinutes: 10,
   }), (error) => error instanceof LanguagePracticeSessionStoreError && !error.message.includes(secret));
+});
+
+test('internal snapshot validates theme and retains NULL default/historical semantics', async () => {
+  for (const conversation_theme_snapshot of [null, undefined, ' Coffee\norders 😀 ']) {
+    const fake = fakeExecutor({ rows: [{ level: 'B1', topic: 'travel', difficulty: null, parameters_snapshot: [], conversation_theme_snapshot }] });
+    assert.deepEqual(await fake.store.getOwnedSnapshot(OWNER_ID, SESSION_ID), {
+      level: 'B1', topic: 'travel', difficulty: null, parameters: [], conversationTheme: conversation_theme_snapshot ?? null,
+    });
+    assert.match(fake.calls[0].sql, /conversation_theme_snapshot/);
+    assert.match(fake.calls[0].sql, /owner_id = \$1::uuid AND id = \$2::uuid/);
+    assert.equal(fake.calls[0].sql.includes('lingualoop_practices'), false);
+  }
+  for (const conversation_theme_snapshot of ['', 'x'.repeat(121), 'bad\u0000theme', '\ud800', 12]) {
+    const fake = fakeExecutor({ rows: [{ level: 'B1', topic: 'travel', difficulty: null, parameters_snapshot: [], conversation_theme_snapshot }] });
+    await assert.rejects(fake.store.getOwnedSnapshot(OWNER_ID, SESSION_ID), LanguagePracticeSessionStoreError);
+  }
+  assert.equal(await fakeExecutor({ rows: [] }).store.getOwnedSnapshot(OWNER_ID, SESSION_ID), null);
 });
 
 test('migration encodes the original catalog and LinguaLoop owner foreign key', () => {

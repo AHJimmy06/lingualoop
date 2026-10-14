@@ -1,6 +1,9 @@
 import { MAX_SYNTHESIS_WAV_BYTES, validateSynthesisText, validateWavBlob, type SynthesisLanguage, type SynthesisResult } from './practice-synthesis';
 
-export type RefreshResult = 'authenticated' | 'no-session' | 'unavailable';
+import { isEmail, isPassword, parseProfile, type Profile } from './features/auth/profile';
+export type RefreshResult = 'authenticated' | 'no-session' | 'unavailable' | 'forbidden';
+
+export type LoginResult = RefreshResult | 'invalid-credentials' | 'invalid-input' | 'rate-limited';
 
 export type TranscriptionResult =
   | { ok: true; transcript: string }
@@ -8,20 +11,55 @@ export type TranscriptionResult =
 
 export class AuthSession {
   private accessToken: string | null = null;
+  private currentProfile: Profile | null = null;
+
+  get profile(): Profile | null { return this.currentProfile; }
   private refreshInFlight: Promise<RefreshResult> | null = null;
   private generation = 0;
   private localRefreshHeld = false;
 
   constructor(private readonly request: typeof fetch = globalThis.fetch.bind(globalThis)) {}
 
+  async login(input: { email: string; password: string }): Promise<LoginResult> {
+    if (!input || typeof input !== 'object' || Object.keys(input).length !== 2 ||
+        !isEmail(input.email) || !isPassword(input.password)) return 'invalid-input';
+    // Explicit login is the only operation that releases the local logout latch.
+    this.clearLocal();
+    const generation = this.generation;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    try {
+      const response = await this.request('/api/auth/login', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input), signal: controller.signal,
+      });
+      if (generation !== this.generation) return 'no-session';
+      if (response.status === 401) return 'invalid-credentials';
+      if (response.status === 400) return 'invalid-input';
+      if (response.status === 429) return 'rate-limited';
+      if (response.status === 403) return 'forbidden';
+      if (response.status !== 200) return 'unavailable';
+      const body: unknown = await response.json();
+      if (generation !== this.generation) return 'no-session';
+      if (!body || typeof body !== 'object' || Object.keys(body).length !== 1 ||
+          !('authenticated' in body) || body.authenticated !== true) return 'unavailable';
+      this.localRefreshHeld = false;
+      return await this.refresh();
+    } catch {
+      return generation !== this.generation ? 'no-session' : 'unavailable';
+    } finally { clearTimeout(timeout); }
+  }
+
   get authenticated(): boolean {
-    return this.accessToken !== null;
+    return this.accessToken !== null && this.currentProfile !== null;
   }
 
   clearLocal(): void {
     this.generation++;
     this.localRefreshHeld = true;
     this.accessToken = null;
+    this.currentProfile = null;
     this.refreshInFlight = null;
   }
 
@@ -45,7 +83,10 @@ export class AuthSession {
         headers: { Authorization: `Bearer ${this.accessToken}` },
       });
       if (this.localRefreshHeld) return null;
-      if (response.status === 401) this.accessToken = null;
+      if (response.status === 401) {
+        this.accessToken = null;
+        this.currentProfile = null;
+      }
       return response;
     } catch {
       return null;
@@ -53,7 +94,17 @@ export class AuthSession {
   }
 
   async postLanguagePractice(url: string, body: Record<string, unknown> | FormData): Promise<Response | null> {
-    if (!this.isLanguagePracticeUrl(url) || this.localRefreshHeld) return null;
+    if (!this.isLanguagePracticeUrl(url)) return null;
+    return this.postWithRefresh(url, body);
+  }
+
+  async postAdminAccounts(url: string, body: Record<string, unknown>): Promise<Response | null> {
+    if (url !== '/api/admin/accounts') return null;
+    return this.postWithRefresh(url, body);
+  }
+
+  private async postWithRefresh(url: string, body: Record<string, unknown> | FormData): Promise<Response | null> {
+    if (this.localRefreshHeld) return null;
     if (!this.accessToken && (await this.refresh()) !== 'authenticated') return null;
     if (this.localRefreshHeld) return null;
 
@@ -63,7 +114,10 @@ export class AuthSession {
     if ((await this.refresh()) !== 'authenticated' || this.localRefreshHeld || generation !== this.generation) return null;
     response = await this.sendLanguagePracticePost(url, body, generation);
     if (this.localRefreshHeld || generation !== this.generation) return null;
-    if (response?.status === 401) this.accessToken = null;
+    if (response?.status === 401) {
+      this.accessToken = null;
+      this.currentProfile = null;
+    }
     return response;
   }
 
@@ -179,10 +233,10 @@ export class AuthSession {
         credentials: 'same-origin',
       });
       if (generation !== this.generation || this.localRefreshHeld) return 'no-session';
-      if (response.status === 401) {
-        this.accessToken = null;
-        return 'no-session';
-      }
+      this.accessToken = null;
+      this.currentProfile = null;
+      if (response.status === 401) return 'no-session';
+      if (response.status === 403) return 'forbidden';
       if (response.status !== 200) return 'unavailable';
 
       const body: unknown = await response.json();
@@ -191,9 +245,25 @@ export class AuthSession {
           typeof body.accessToken !== 'string' || body.accessToken.length === 0) {
         return 'unavailable';
       }
+      const me = await this.request('/api/auth/me', {
+        method: 'GET', credentials: 'same-origin',
+        headers: { Authorization: `Bearer ${body.accessToken}` },
+      });
+      if (generation !== this.generation || this.localRefreshHeld) return 'no-session';
+      if (me.status === 403) return 'forbidden';
+      if (me.status === 401) return 'no-session';
+      if (me.status !== 200) return 'unavailable';
+      const profile = parseProfile(await me.json());
+      if (generation !== this.generation || this.localRefreshHeld) return 'no-session';
+      if (!profile) return 'forbidden';
+      this.currentProfile = profile;
       this.accessToken = body.accessToken;
       return 'authenticated';
     } catch {
+      if (generation === this.generation) {
+        this.accessToken = null;
+        this.currentProfile = null;
+      }
       return this.localRefreshHeld ? 'no-session' : 'unavailable';
     }
   }

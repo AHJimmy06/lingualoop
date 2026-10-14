@@ -1,0 +1,22 @@
+# Standalone frontend project: never combine with the API/database overlays.
+name: lingualoop-baseline-web
+
+services:
+  web:
+    # Require a unique baseline tag; do not reuse it for later role changes.
+    image: ${LINGUALOOP_BASELINE_WEB_IMAGE:?Set a unique baseline frontend image tag}
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    restart: "no"
+    stop_grace_period: 10s
+    ports:
+      - "127.0.0.1:5001:80"
+    networks:
+      - existing-api
+
+networks:
+  existing-api:
+    external: true
+    # Explicit name from compose.postgres.yml; this file cannot create it.
+    name: lingualoop-postgres-net

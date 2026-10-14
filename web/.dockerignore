@@ -1,0 +1,32 @@
+# Allow only frontend build inputs and the runtime server configuration.
+**
+!Dockerfile
+!.dockerignore
+!nginx.conf
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!index.html
+!tsconfig.json
+!vite.config.ts
+!src/
+!src/**
+!public/
+!public/**
+
+# Keep local output, credentials and secrets out, including nested copies.
+**/node_modules
+**/dist
+**/.git
+**/.env
+**/.env.*
+**/*.env
+**/.npmrc
+**/.pnpmrc
+**/secrets
+**/credentials
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.log

@@ -18,11 +18,12 @@
     "@nestjs/jwt": "11.0.2",
     "@nestjs/platform-express": "^11.1.14",
     "google-auth-library": "10.9.1",
-    "openai": "6.25.0",
     "multer": "2.2.0",
+    "openai": "6.25.0",
     "pg": "8.16.3",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2"
+    "rxjs": "^7.8.2",
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.16",

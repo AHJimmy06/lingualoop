@@ -14,6 +14,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 const { memoryStorage } = require('multer') as { memoryStorage: () => unknown };
 import { ConfiguredVerifiedRequestGuard } from '../auth/google-auth.providers';
+import { RoleGuard, Roles } from '../auth/role.guard';
 import {
   LanguagePracticeSessionStore,
 } from './language-practice-session-store';
@@ -34,7 +35,8 @@ type SessionStore = Pick<LanguagePracticeSessionStore, 'getSession'>;
 type TurnStore = Pick<LanguagePracticeTurnStore, 'listCompletedTurns'>;
 
 @Controller('language-practice')
-@UseGuards(ConfiguredVerifiedRequestGuard)
+@UseGuards(ConfiguredVerifiedRequestGuard, RoleGuard)
+@Roles('student')
 export class LanguagePracticeTurnController {
   constructor(
     @Inject(LANGUAGE_PRACTICE_SESSION_STORE) private readonly sessions: SessionStore,

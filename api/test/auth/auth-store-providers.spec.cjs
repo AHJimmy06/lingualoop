@@ -9,13 +9,13 @@ const {
   LINGUALOOP_REFRESH_STORE,
 } = require('../../dist/auth/auth-store.providers.js');
 const { IdentityStore } = require('../../dist/auth/identity-store.js');
-const { OAuthStateDbStore } = require('../../dist/auth/oauth-state-db.js');
+const { AccountStore, LINGUALOOP_ACCOUNT_STORE } = require('../../dist/auth/account-store.js');
 const { SessionStore } = require('../../dist/auth/session-store.js');
 const { RefreshStore } = require('../../dist/auth/refresh-store.js');
 
 const STORE_TYPES = new Map([
   [LINGUALOOP_IDENTITY_STORE, IdentityStore],
-  [LINGUALOOP_OAUTH_STATE_STORE, OAuthStateDbStore],
+  [LINGUALOOP_ACCOUNT_STORE, AccountStore],
   [LINGUALOOP_SESSION_STORE, SessionStore],
   [LINGUALOOP_REFRESH_STORE, RefreshStore],
 ]);
@@ -46,8 +46,9 @@ test('Nest composes all auth stores from its one shared executor without startup
   }
 
   assert.equal(calls.length, 0, 'constructing auth stores must not query PostgreSQL');
-  await instances.get(LINGUALOOP_IDENTITY_STORE).findOwnerByIdentity({ issuer: 'google', subject: 'offline-user' });
-  await instances.get(LINGUALOOP_OAUTH_STATE_STORE).consume('a'.repeat(64));
+  assert.equal(providers.some(provider => provider.provide === LINGUALOOP_OAUTH_STATE_STORE), false, 'no active OAuth state dependency');
+  await instances.get(LINGUALOOP_IDENTITY_STORE).findOwnerByIdentity({ issuer: 'local', subject: '123e4567-e89b-42d3-a456-426614174000' });
+  await instances.get(LINGUALOOP_ACCOUNT_STORE).list();
   await instances.get(LINGUALOOP_SESSION_STORE).revokeSession('123e4567-e89b-42d3-a456-426614174000', '123e4567-e89b-42d3-a456-426614174000', 1);
   assert.equal(await instances.get(LINGUALOOP_REFRESH_STORE).initialize(
     '123e4567-e89b-42d3-a456-426614174000',

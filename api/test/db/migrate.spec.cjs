@@ -11,6 +11,8 @@ const names = [
   '005_language_practice_sessions.sql', '006_language_practice_turns.sql',
   '007_language_practice_turn_lease.sql', '008_language_practice_reports.sql',
   '009_language_practice_ai_reports.sql', '010_language_practice_report_claims.sql',
+  '011_roles_practices.sql', '012_custom_practice_theme_image.sql',
+  '013_practice_difficulty.sql',
 ];
 const lock = 'lingualoop:schema-migrations';
 const migrationSql = names.map((name) => require('node:fs').readFileSync(path.join(migrationsDir, name), 'utf8'));
@@ -38,7 +40,7 @@ function fakeClient({ ledger = false, applied = [], collision = [], failOnSql } 
 
 test('applies ordered SQL under LinguaLoop advisory lock and closes the client', async () => {
   const fake = fakeClient();
-  assert.equal(await runLinguaLoopMigrations(fake.client, migrationsDir), 10);
+  assert.equal(await runLinguaLoopMigrations(fake.client, migrationsDir), 13);
   assert.deepEqual(fake.calls[0].sql, 'BEGIN');
   assert.deepEqual(fake.calls[1], {
     sql: 'SELECT pg_advisory_xact_lock(hashtext($1))', parameters: [lock],
@@ -72,6 +74,28 @@ test('a complete ledger rerun is a no-op', async () => {
   assert.equal(fake.calls.filter((call) => names.some((name) => call.sql.includes(name))).length, 0);
   assert.ok(fake.calls.some((call) => call.sql === 'COMMIT'));
   assert.equal(fake.ended, 1);
+});
+
+for (const count of [10, 11, 12]) {
+  test(`existing ${count}-migration ledger receives only its additive suffix without rewriting historical SQL`, async () => {
+    const fake = fakeClient({ ledger: true, applied: names.slice(0, count).map((version, index) => ({ version, checksum: hashes[index] })) });
+    assert.equal(await runLinguaLoopMigrations(fake.client, migrationsDir), 13 - count);
+    assert.deepEqual(fake.calls.filter(call => migrationSql.includes(call.sql)).map(call => call.sql), migrationSql.slice(count));
+    const ledgerWrites = fake.calls.filter(call => call.sql.startsWith('INSERT INTO lingualoop_schema_migrations'));
+    assert.deepEqual(ledgerWrites.map(call => call.parameters), names.slice(count).map((version, index) => [version, hashes[count + index]]));
+  });
+}
+
+test('011 makes actual accounts role authority, preserves refresh plumbing and adds nullable completion', () => {
+  const sql = migrationSql[10];
+  assert.match(sql, /ALTER TABLE lingualoop_accounts/);
+  for (const field of ['name VARCHAR\\(120\\)', 'email VARCHAR\\(254\\)', 'password_hash TEXT', 'role VARCHAR\\(7\\)', 'updated_at TIMESTAMPTZ']) assert.match(sql, new RegExp('ADD COLUMN ' + field + ' NOT NULL'));
+  assert.match(sql, /issuer = 'local' AND subject = id::text/);
+  assert.match(sql, /CREATE UNIQUE INDEX lingualoop_one_admin_account[\s\S]*WHERE role = 'admin'/);
+  assert.match(sql, /ADD COLUMN completed_at TIMESTAMPTZ,/);
+  assert.match(sql, /parameters_snapshot JSONB NOT NULL DEFAULT '\[\]'::jsonb/);
+  assert.match(sql, /parameter_coverage JSONB NOT NULL DEFAULT '\[\]'::jsonb/);
+  assert.doesNotMatch(sql, /CREATE TABLE lingualoop_account_approvals|(?:UPDATE|DELETE FROM|TRUNCATE|INSERT INTO) lingualoop_/);
 });
 
 test('checksum drift rolls back and reports only sanitized error', async () => {

@@ -1,3 +1,5 @@
+import { normalizeEmail, isAccountRole, type AccountRole } from './account-role';
+import { validateAccountName } from './account-store';
 import {
   CanActivate,
   ExecutionContext,
@@ -13,6 +15,9 @@ export interface VerifiedIdentity {
 
 export interface AuthenticatedIdentity extends VerifiedIdentity {
   ownerId: string;
+  name: string;
+  email: string;
+  role: AccountRole;
 }
 
 export interface BearerTokenVerifier {
@@ -21,6 +26,7 @@ export interface BearerTokenVerifier {
 
 export interface IdentityOwnerLookup {
   findOwnerByIdentity(identity: Pick<VerifiedIdentity, 'issuer' | 'subject'>): Promise<string | null>;
+  findAccountByOwner(ownerId: string): Promise<{ name: string; email: string; role: AccountRole } | null>;
 }
 
 export interface ActiveSessionChecker {
@@ -41,7 +47,7 @@ interface AuthenticatedRequest {
 }
 
 const BEARER_HEADER_PATTERN = /^Bearer ([A-Za-z0-9\-._~+/]+=*)$/i;
-const GOOGLE_ISSUER = 'google';
+const LOCAL_ISSUER = 'local';
 const MAX_SUBJECT_BYTES = 512;
 const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -56,12 +62,20 @@ export class VerifiedRequestGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
+    const http = context.switchToHttp();
+    const request = http.getRequest<AuthenticatedRequest>();
+    const response = http.getResponse?.<{ setHeader?: (name: string, value: string) => void }>();
+    // Authentication failures and private account/report responses must never be shared-cache entries.
+    if (typeof response?.setHeader === 'function') {
+      response.setHeader('Cache-Control', 'private, no-store, max-age=0');
+      response.setHeader('Pragma', 'no-cache');
+    }
     delete request.verifiedIdentity;
     const token = this.extractBearerToken(request);
 
     if (!this.verifier || typeof this.verifier.verifyBearerToken !== 'function' ||
         !this.ownerLookup || typeof this.ownerLookup.findOwnerByIdentity !== 'function' ||
+        typeof this.ownerLookup.findAccountByOwner !== 'function' ||
         !this.sessionChecker || typeof this.sessionChecker.isSessionActive !== 'function') {
       throw new HttpException('Authentication service unavailable.', 503);
     }
@@ -101,7 +115,21 @@ export class VerifiedRequestGuard implements CanActivate {
     if (typeof active !== 'boolean') throw new HttpException('Authentication service unavailable.', 503);
     if (!active) throw new HttpException('Unauthorized.', 401);
 
-    request.verifiedIdentity = { ...identity, ownerId };
+    let approval;
+    try {
+      approval = await this.ownerLookup.findAccountByOwner(ownerId);
+      if (approval) validateAccountName(approval.name);
+      if (approval !== null && (!approval || normalizeEmail(approval.email) !== approval.email || !isAccountRole(approval.role))) {
+        throw new Error();
+      }
+    } catch { throw new HttpException('Authentication service unavailable.', 503); }
+    if (approval === null) throw new HttpException('Forbidden.', 403);
+
+    // Never propagate role/email claims (or any other fields) from the bearer verifier.
+    request.verifiedIdentity = {
+      issuer: identity.issuer, subject: identity.subject, sessionId: identity.sessionId,
+      ownerId, name: approval.name, email: approval.email, role: approval.role,
+    };
     return true;
   }
 
@@ -129,7 +157,7 @@ export class VerifiedRequestGuard implements CanActivate {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
     const identity = value as Record<string, unknown>;
     const { issuer, subject, sessionId } = identity;
-    return issuer === GOOGLE_ISSUER && typeof subject === 'string' && subject.length > 0 &&
+    return issuer === LOCAL_ISSUER && typeof subject === 'string' && UUID_PATTERN.test(subject) &&
       Buffer.byteLength(subject, 'utf8') <= MAX_SUBJECT_BYTES &&
       Buffer.from(subject, 'utf8').toString('utf8') === subject && subject.normalize('NFC') === subject &&
       !/[\p{White_Space}\p{Cc}\p{Cf}]/u.test(subject) &&

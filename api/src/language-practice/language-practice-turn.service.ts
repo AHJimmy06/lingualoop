@@ -1,7 +1,10 @@
 import type { CoachPromptInput } from './coach-prompt';
+import { practiceTopicLabel } from './practice-topic-labels';
+import { getSttDiagnostic } from './fastconformer-host';
+import type { SttDiagnostic } from './fastconformer-host';
 import { LanguagePracticeTurnAdmissionError } from './language-practice-turn-store';
 import type { CoachResult } from './coach-result';
-import type { LanguagePracticeLevel, LanguagePracticeTopic } from './language-practice-session-store';
+import type { LanguagePracticeLevel, LanguagePracticeTopic, PracticeDifficulty } from './language-practice-session-store';
 
 export const LANGUAGE_PRACTICE_MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024;
 export const LANGUAGE_PRACTICE_ACCEPTED_MIME_TYPES = [
@@ -12,9 +15,6 @@ export const LANGUAGE_PRACTICE_ACCEPTED_MIME_TYPES = [
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_HISTORY_MESSAGES = 20;
 const MAX_HISTORY_CONTENT = 2_000;
-const TOPIC_LABELS: Record<LanguagePracticeTopic, string> = {
-  travel: 'Travel', work: 'Work', studies: 'Studies', 'everyday-conversation': 'Everyday conversation',
-};
 
 export type PracticeTurn = {
   id: string;
@@ -38,8 +38,11 @@ export interface PracticeTurnStore {
 }
 
 export interface OwnedPracticeContext {
+  difficulty: PracticeDifficulty | null;
   level: LanguagePracticeLevel;
   topic: LanguagePracticeTopic;
+  conversationTheme?: string | null;
+  parameters?: import('./practice-catalogue').PracticeParameter[];
 }
 
 export interface PracticeTurnAudio {
@@ -58,8 +61,12 @@ export type PracticeTurnDiagnosticStage =
   | 'reread'
   | 'response_session';
 
+export type PracticeTurnDiagnosticDetail = SttDiagnostic | {
+  code: 'unexpected_failure'; component: 'turn'; phase: 'orchestration';
+};
+
 export interface PracticeTurnDiagnostics {
-  report(stage: PracticeTurnDiagnosticStage): void;
+  report(stage: PracticeTurnDiagnosticStage, detail: PracticeTurnDiagnosticDetail): void;
 }
 
 export interface PracticeTurnDependencies {
@@ -91,7 +98,9 @@ export class LanguagePracticeTurnService {
         !dependencies.speechToText || !dependencies.synthesis || !dependencies.coach) {
       throw new TypeError('All language-practice turn ports are required.');
     }
-    this.diagnostics = dependencies.diagnostics ?? { report: (stage) => console.error('language_practice_turn_failure', stage) };
+    this.diagnostics = dependencies.diagnostics ?? {
+      report: (stage, detail) => console.error('language_practice_turn_failure', { stage, ...detail }),
+    };
   }
 
   /** Reports a controller-owned post-service failure without exposing request or error data. */
@@ -135,12 +144,14 @@ export class LanguagePracticeTurnService {
       const coaching = await this.dependencies.coach.respond({
         context: {
           targetLanguage: { code: 'en', label: 'English' },
-          topic: { code: context.topic, label: TOPIC_LABELS[context.topic] },
+          topic: { code: context.topic, label: practiceTopicLabel(context.topic, context.conversationTheme) },
           source: 'practice-catalog',
         },
         level: context.level,
+        difficulty: context.difficulty,
         transcript,
         history,
+        ...(context.parameters?.length ? { parameters: context.parameters } : {}),
       });
       stage = 'tts';
       const wav = await this.dependencies.synthesis.synthesizeLocal(coaching.assistantResponse, 'en');
@@ -170,14 +181,17 @@ export class LanguagePracticeTurnService {
           // Preserve a generic error and never reveal provider or persistence details.
         }
       }
-      this.reportDiagnostic(stage);
+      this.reportDiagnostic(stage, error);
       throw new PracticeTurnUnavailableError();
     }
   }
 
-  private reportDiagnostic(stage: PracticeTurnDiagnosticStage): void {
+  private reportDiagnostic(stage: PracticeTurnDiagnosticStage, error?: unknown): void {
     try {
-      this.diagnostics.report(stage);
+      const detail = stage === 'stt' ? getSttDiagnostic(error) : undefined;
+      this.diagnostics.report(stage, detail ?? {
+        code: 'unexpected_failure', component: 'turn', phase: 'orchestration',
+      });
     } catch {
       // Diagnostics are best-effort and cannot change the turn result or billing outcome.
     }

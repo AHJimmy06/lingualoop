@@ -50,6 +50,8 @@ test('practice providers expose FFmpeg and own one lazy host with shutdown clean
   assert.equal(runtime.host, undefined);
   const host = runtime.getHost();
   assert.equal(runtime.getHost(), host);
+  assert.equal(host.config.startupTimeoutMs, 60000);
+  assert.equal(host.config.requestTimeoutMs, undefined);
   let shutdownCalls = 0;
   host.shutdown = async () => { shutdownCalls++; };
   await runtime.onApplicationShutdown();
@@ -60,5 +62,7 @@ test('shutdown before first host use does not construct a host', async () => {
   const configuration = loadPracticeRuntimeConfiguration(validEnv);
   const runtime = new PracticeRuntimeHost(configuration);
   await runtime.onApplicationShutdown();
+  assert.equal(runtime.host, undefined);
+  assert.throws(() => runtime.getHost(), /stopped or closed/);
   assert.equal(runtime.host, undefined);
 });

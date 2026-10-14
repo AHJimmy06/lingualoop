@@ -10,7 +10,7 @@ export class RefreshStoreError extends Error {
 export interface RotatedRefreshSession {
   status: 'rotated';
   ownerId: string;
-  issuer: 'google';
+  issuer: 'local';
   subject: string;
   expiresAtMs: number;
 }
@@ -96,13 +96,14 @@ export class RefreshStore {
         }
         return { status: result.status };
       }
-      if (result.status !== 'rotated' || result.issuer !== 'google' || typeof result.subject !== 'string' ||
+      if (result.status !== 'rotated' || result.issuer !== 'local' || typeof result.subject !== 'string' ||
           result.subject.length === 0 || Buffer.from(result.subject, 'utf8').toString('utf8') !== result.subject ||
           result.subject.normalize('NFC') !== result.subject || Buffer.byteLength(result.subject, 'utf8') > 512 ||
           /[\p{White_Space}\p{Cc}\p{Cf}]/u.test(result.subject)) throw new RefreshStoreError();
       uuid(result.ownerId);
+      if (result.subject !== result.ownerId) throw new RefreshStoreError();
       const expiresAtMs = returnedExpiry(result.expiresAtMs, nowMs);
-      return { status: 'rotated', ownerId: result.ownerId, issuer: 'google', subject: result.subject, expiresAtMs };
+      return { status: 'rotated', ownerId: result.ownerId, issuer: 'local', subject: result.subject, expiresAtMs };
     } catch {
       throw new RefreshStoreError();
     }

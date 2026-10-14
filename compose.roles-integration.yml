@@ -1,0 +1,41 @@
+# Standalone roles database. Never combine with baseline Compose files.
+name: lingualoop-roles-t4
+
+services:
+  postgres:
+    image: postgres:16.13-alpine3.23
+    container_name: lingualoop-roles-t4-postgres
+    restart: "no"
+    environment:
+      POSTGRES_DB: lingualoop
+      POSTGRES_USER: lingualoop
+      POSTGRES_PASSWORD_FILE: /run/secrets/roles_db_password
+    ports:
+      - "127.0.0.1:5543:5432"
+    volumes:
+      - roles-db-data:/var/lib/postgresql/data
+    networks:
+      roles-net:
+        aliases:
+          - postgres
+          - roles-db
+    secrets:
+      - roles_db_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+secrets:
+  roles_db_password:
+    file: ${LINGUALOOP_ROLES_DB_PASSWORD_FILE:?Set a fresh external roles-only password file}
+
+volumes:
+  roles-db-data:
+    name: lingualoop-roles-t4-postgres-data
+
+networks:
+  roles-net:
+    name: lingualoop-roles-t4-net
+    driver: bridge

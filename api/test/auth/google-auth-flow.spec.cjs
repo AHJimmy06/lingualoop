@@ -36,7 +36,7 @@ test('begin creates one Google state and returns only the exact configured autho
   assert.equal(url.origin + url.pathname, 'https://accounts.google.com/o/oauth2/v2/auth');
   assert.deepEqual([...url.searchParams.entries()], [
     ['response_type', 'code'], ['client_id', clientId], ['redirect_uri', callbackUrl],
-    ['scope', 'openid'], ['state', state],
+    ['scope', 'openid email'], ['state', state],
   ]);
   assert.match(result.stateCookie, new RegExp(`^__Host-lingualoop-oauth-state=${state};`));
   assert.deepEqual(calls, [['createState', { provider: 'google' }]]);

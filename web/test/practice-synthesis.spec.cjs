@@ -15,6 +15,9 @@ require.extensions['.ts'] = (module, filename) => {
 const { AuthSession } = require('../src/auth-session.ts');
 const synthesis = require('../src/practice-synthesis.ts');
 
+function profileResponse() {
+  return response(JSON.stringify({ ownerId: '123e4567-e89b-42d3-a456-426614174000', name: 'Student', email: 'student@example.com', role: 'student' }), 200, { 'content-type': 'application/json' });
+}
 function wavBytes() {
   const bytes = new Uint8Array(48);
   bytes.set([82, 73, 70, 70], 0);
@@ -27,7 +30,7 @@ function response(body, status = 200, headers = { 'content-type': 'audio/wav' })
 }
 
 async function authenticatedSession(request) {
-  const session = new AuthSession(request);
+  const session = new AuthSession((url, init) => url === '/api/auth/me' ? Promise.resolve(profileResponse()) : request(url, init));
   assert.equal(await session.refresh(), 'authenticated');
   return session;
 }
@@ -54,6 +57,7 @@ test('synthesizes with the volatile bearer, refreshes once on 401, and accepts v
   const requests = [];
   const session = new AuthSession(async (url, options) => {
     requests.push({ url, options });
+    if (url === '/api/auth/me') return profileResponse();
     if (url === '/api/auth/refresh') return response(JSON.stringify({ accessToken: 'volatile-token' }), 200, { 'content-type': 'application/json' });
     if (requests.filter((item) => item.url === '/api/practice/synthesize').length === 1) return response('', 401);
     return response(wavBytes());

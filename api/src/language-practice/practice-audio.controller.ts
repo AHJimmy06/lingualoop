@@ -1,5 +1,6 @@
 import { Controller, Inject, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { ConfiguredVerifiedRequestGuard } from '../auth/google-auth.providers';
+import { RoleGuard, Roles } from '../auth/role.guard';
 import type { AuthenticatedIdentity } from '../auth/verified-request.guard';
 import { PracticeAudioBusyError, PracticeAudioService } from './practice-audio.service';
 
@@ -32,7 +33,8 @@ export class PracticeAudioController {
   constructor(@Inject(PracticeAudioService) private readonly audio: Pick<PracticeAudioService, 'transcribe'>) {}
 
   @Post('transcribe')
-  @UseGuards(ConfiguredVerifiedRequestGuard)
+  @UseGuards(ConfiguredVerifiedRequestGuard, RoleGuard)
+  @Roles('student')
   async transcribe(@Req() request: AudioRequest, @Res() response: AudioResponse): Promise<void> {
     this.setSafeHeaders(response);
     const mimeType = request.headers['content-type'];

@@ -12,16 +12,21 @@ import { LanguagePracticeSetupView } from './features/language-practice/Language
 import { PracticeReportView } from './features/language-practice/PracticeReportView';
 import { LivePracticeView } from './features/language-practice/LivePracticeView';
 import { resolveRoute, type RefreshResult } from './react-route-policy';
+import { AdminAccountsView } from './features/admin/AdminAccountsView';
+import { TeacherPracticesView } from './features/teacher/TeacherPracticesView';
+import { TeacherResultsView } from './features/teacher/TeacherResultsView';
+import { CustomPracticeView } from './features/language-practice/PracticeCatalogue';
+import type { Role } from './features/auth/profile';
 
 function RouteGate({ children }: { children: ReactNode }) {
   const location = useLocation();
   const routeKey = `${location.pathname}${location.search}`;
-  const [checkedRoute, setCheckedRoute] = useState<{ key: string; result: RefreshResult } | null>(null);
+  const [checkedRoute, setCheckedRoute] = useState<{ key: string; result: RefreshResult; role: Role | null } | null>(null);
 
   useEffect(() => {
     let active = true;
     void authSession.refresh().then((result) => {
-      if (active) setCheckedRoute({ key: routeKey, result });
+      if (active) setCheckedRoute({ key: routeKey, result, role: authSession.profile?.role ?? null });
     });
     return () => { active = false; };
   }, [routeKey]);
@@ -31,7 +36,7 @@ function RouteGate({ children }: { children: ReactNode }) {
     return <main className="mx-auto flex min-h-svh w-full max-w-xl items-center px-5 py-8" role="status">Checking your session…</main>;
   }
 
-  const decision = resolveRoute(location.pathname, location.search, refresh);
+  const decision = resolveRoute(location.pathname, location.search, refresh, checkedRoute?.role ?? null);
   if (decision.kind === 'redirect') return <Navigate to={decision.to} replace />;
   return children;
 }
@@ -48,6 +53,11 @@ export function ReactRoutes() {
       <Routes>
         <Route path="/" element={<Navigate to="/language-practice" replace />} />
         <Route path="/login" element={<LoginRoute />} />
+        <Route path="/admin" element={<RouteGate><AdminAccountsView /></RouteGate>} />
+        <Route path="/teacher" element={<RouteGate><TeacherPracticesView /></RouteGate>} />
+        <Route path="/teacher/practices/:practiceId/results" element={<RouteGate><TeacherResultsView /></RouteGate>} />
+        <Route path="/teacher/practices/:practiceId/results/:sessionId" element={<RouteGate><TeacherResultsView /></RouteGate>} />
+        <Route path="/language-practice/practices/:practiceId" element={<RouteGate><CustomPracticeView /></RouteGate>} />
         <Route path="/language-practice" element={
           <RouteGate><LanguagePracticeSetupView /></RouteGate>
         } />

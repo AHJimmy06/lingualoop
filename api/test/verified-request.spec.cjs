@@ -7,11 +7,12 @@ const {
 } = require('../dist/auth/verified-request.guard.js');
 
 const IDENTITY = {
-  issuer: 'google',
-  subject: 'user-42',
+  issuer: 'local',
+  subject: '550e8400-e29b-41d4-a716-446655440000',
   sessionId: '123e4567-e89b-42d3-a456-426614174000',
 };
 const OWNER = '550e8400-e29b-41d4-a716-446655440000';
+const APPROVAL = { name: 'Persisted Student', email: 'approved@example.test', role: 'student' };
 
 function executionContext(authorization, extraHeaders = {}) {
   const request = {
@@ -38,7 +39,8 @@ function dependencies(overrides = {}) {
 
 function guard(overrides = {}) {
   const deps = dependencies(overrides);
-  return new VerifiedRequestGuard(deps.verifier, deps.ownerLookup, deps.sessionChecker, deps.nowMs);
+  const lookup = { findAccountByOwner: async () => APPROVAL, ...deps.ownerLookup };
+  return new VerifiedRequestGuard(deps.verifier, lookup, deps.sessionChecker, deps.nowMs);
 }
 
 test('verifies token, resolves provider owner, checks session, and attaches only validated identity', async () => {
@@ -54,9 +56,9 @@ test('verifies token, resolves provider owner, checks session, and attaches only
 
   assert.equal(await instance.canActivate(context), true);
   assert.equal(verifiedToken, 'token-value');
-  assert.deepEqual(ownerIdentity, { issuer: 'google', subject: 'user-42' });
+  assert.deepEqual(ownerIdentity, { issuer: 'local', subject: OWNER });
   assert.deepEqual(sessionArguments, [OWNER, IDENTITY.sessionId, 1_700_000_000_000]);
-  assert.deepEqual(request.verifiedIdentity, { ...IDENTITY, ownerId: OWNER });
+  assert.deepEqual(request.verifiedIdentity, { ...IDENTITY, ownerId: OWNER, ...APPROVAL });
   assert.equal(request.subject, 'client-supplied-subject');
 });
 
@@ -179,6 +181,43 @@ test('checks current time on every authorization and permits reuse only while th
   assert.equal(expired.request.verifiedIdentity, undefined);
   assert.equal(verified, 3);
   assert.deepEqual(checkedAt, [100, 100, 200]);
+});
+
+test('account is reloaded every request and token or client roles have no authority', async () => {
+  let role = 'student';
+  let reads = 0;
+  const instance = guard({
+    verifier: { verifyBearerToken: async () => ({ ...IDENTITY, role: 'admin', email: 'forged@example.test' }) },
+    ownerLookup: {
+      findOwnerByIdentity: async () => OWNER,
+      findAccountByOwner: async owner => { assert.equal(owner, OWNER); reads++; return role ? { ...APPROVAL, role } : null; },
+    },
+  });
+  const first = executionContext('Bearer same-token');
+  await instance.canActivate(first.context);
+  assert.equal(first.request.verifiedIdentity.role, 'student');
+  role = 'teacher';
+  const second = executionContext('Bearer same-token');
+  await instance.canActivate(second.context);
+  assert.equal(second.request.verifiedIdentity.role, 'teacher');
+  assert.equal(second.request.verifiedIdentity.email, APPROVAL.email);
+  role = null;
+  const historical = executionContext('Bearer same-token');
+  await assert.rejects(instance.canActivate(historical.context), { status: 403 });
+  assert.equal(historical.request.verifiedIdentity, undefined);
+  assert.equal(reads, 3);
+});
+
+test('account failures and malformed persisted authority are sanitized 503', async () => {
+  for (const findAccountByOwner of [
+    async () => { throw Error('private detail'); }, async () => undefined,
+    async () => ({ ...APPROVAL, role: 'root' }), async () => ({ ...APPROVAL, email: 'BAD@example.test' }),
+  ]) {
+    const attempt = executionContext('Bearer token');
+    await assert.rejects(guard({ ownerLookup: { findOwnerByIdentity: async () => OWNER, findAccountByOwner } }).canActivate(attempt.context),
+      error => error.status === 503 && error.message === 'Authentication service unavailable.');
+    assert.equal(attempt.request.verifiedIdentity, undefined);
+  }
 });
 
 test('maps owner and session database failures to sanitized 503 responses', async () => {

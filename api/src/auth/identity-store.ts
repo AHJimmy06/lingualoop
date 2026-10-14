@@ -1,82 +1,46 @@
-export interface QueryResult {
-  rows: unknown[];
-}
+import { normalizeEmail, isAccountRole, type AccountRole } from './account-role';
+import { validateAccountName } from './account-store';
 
-/** Minimal adapter boundary; implementations bind values rather than interpolate SQL. */
+export interface QueryResult { rows: unknown[] }
+/** Implementations bind all values and own transaction lifetime. */
 export interface QueryExecutor {
   query(sql: string, parameters: readonly unknown[]): Promise<QueryResult>;
+  withTransaction?<T>(callback: (tx: QueryExecutor) => Promise<T>): Promise<T>;
 }
-
-export interface VerifiedIdentity {
-  issuer: string;
-  subject: string;
-}
-
+export interface VerifiedIdentity { issuer: string; subject: string; email?: string }
 export class IdentityStoreError extends Error {
-  constructor() {
-    super('Identity store operation failed.');
-    this.name = 'IdentityStoreError';
-  }
+  constructor() { super('Identity store operation failed.'); this.name = 'IdentityStoreError'; }
 }
-
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const MAX_SUBJECT_BYTES = 512;
-
-const UPSERT_OWNER_SQL = `
-  INSERT INTO lingualoop_accounts (issuer, subject)
-  VALUES ($1, $2)
-  ON CONFLICT (issuer, subject) DO UPDATE
-    SET issuer = EXCLUDED.issuer
-  RETURNING id
-`;
-const FIND_OWNER_SQL = `
-  SELECT id FROM lingualoop_accounts
-  WHERE issuer = $1 AND subject = $2
-`;
-
-function validateIdentity(identity: VerifiedIdentity): void {
-  if (!identity || typeof identity !== 'object' || Array.isArray(identity)) throw new IdentityStoreError();
-  const { issuer, subject } = identity;
-  if (issuer !== 'google') throw new IdentityStoreError();
-  if (typeof subject !== 'string' || subject.length === 0 ||
-      Buffer.byteLength(subject, 'utf8') > MAX_SUBJECT_BYTES ||
-      Buffer.from(subject, 'utf8').toString('utf8') !== subject ||
-      subject.normalize('NFC') !== subject || /[\p{White_Space}\p{Cc}\p{Cf}]/u.test(subject)) {
-    throw new IdentityStoreError();
-  }
-}
-
-function returnedId(result: QueryResult, required: boolean): string | null {
-  if (!result || !Array.isArray(result.rows)) throw new IdentityStoreError();
-  if (result.rows.length === 0 && !required) return null;
-  if (result.rows.length !== 1) throw new IdentityStoreError();
-  const row = result.rows[0] as { id?: unknown } | null;
-  if (!row || typeof row !== 'object' || typeof row.id !== 'string' || !UUID_PATTERN.test(row.id)) {
-    throw new IdentityStoreError();
-  }
-  return row.id;
-}
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export class IdentityStore {
   constructor(private readonly executor: QueryExecutor) {
     if (!executor || typeof executor.query !== 'function') throw new TypeError('A query executor is required.');
   }
+  /** Retired admission boundary: external identities can never create prototype accounts. */
+  async getOrCreateOwner(_identity: VerifiedIdentity): Promise<string> { throw new IdentityStoreError(); }
 
-  async getOrCreateOwner(identity: VerifiedIdentity): Promise<string> {
-    validateIdentity(identity);
+  async findAccountByOwner(ownerId: string): Promise<{ name: string; email: string; role: AccountRole } | null> {
     try {
-      return returnedId(await this.executor.query(UPSERT_OWNER_SQL, [identity.issuer, identity.subject]), true)!;
-    } catch {
-      throw new IdentityStoreError();
-    }
+      if (!UUID.test(ownerId)) throw new IdentityStoreError();
+      const result = await this.executor.query('SELECT name, email, role FROM lingualoop_accounts WHERE id = $1', [ownerId]);
+      if (result.rows.length === 0) return null;
+      if (result.rows.length !== 1) throw new IdentityStoreError();
+      const row = result.rows[0] as { name: unknown; email: unknown; role: unknown };
+      if (!row || normalizeEmail(row.email) !== row.email || !isAccountRole(row.role)) throw new IdentityStoreError();
+      validateAccountName(row.name);
+      return { name: row.name, email: row.email as string, role: row.role };
+    } catch { throw new IdentityStoreError(); }
   }
-
   async findOwnerByIdentity(identity: VerifiedIdentity): Promise<string | null> {
-    validateIdentity(identity);
     try {
-      return returnedId(await this.executor.query(FIND_OWNER_SQL, [identity.issuer, identity.subject]), false);
-    } catch {
-      throw new IdentityStoreError();
-    }
+      if (!identity || identity.issuer !== 'local' || !UUID.test(identity.subject)) throw new IdentityStoreError();
+      const result = await this.executor.query(`SELECT id FROM lingualoop_accounts
+        WHERE issuer = $1 AND subject = $2 AND id::text = $2`, [identity.issuer, identity.subject]);
+      if (!result.rows.length) return null;
+      const row = result.rows[0] as { id?: unknown };
+      if (result.rows.length !== 1 || !row || typeof row.id !== 'string' || !UUID.test(row.id) || row.id !== identity.subject) throw new IdentityStoreError();
+      return row.id;
+    } catch { throw new IdentityStoreError(); }
   }
 }

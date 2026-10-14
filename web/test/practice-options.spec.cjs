@@ -73,6 +73,7 @@ test('requests protected options with bearer and refreshes exactly once after 40
   const calls = [];
   const session = new AuthSession(async (url, init) => {
     calls.push({ url, init });
+    if (url === '/api/auth/me') return json({ ownerId: '123e4567-e89b-42d3-a456-426614174000', name: 'Student', email: 'student@example.com', role: 'student' });
     if (url === '/api/auth/refresh') return json({ accessToken: `token-${calls.length}` });
     if (calls.filter((call) => call.url.endsWith('/options')).length === 1) return json({}, 401);
     return json(payload);
@@ -82,7 +83,7 @@ test('requests protected options with bearer and refreshes exactly once after 40
   const optionCalls = calls.filter((call) => call.url.endsWith('/options'));
   assert.equal(optionCalls.length, 2);
   assert.equal(optionCalls[0].init.headers.Authorization, 'Bearer token-1');
-  assert.equal(optionCalls[1].init.headers.Authorization, 'Bearer token-3');
+  assert.equal(optionCalls[1].init.headers.Authorization, 'Bearer token-4');
   assert.equal(optionCalls[1].init.credentials, 'same-origin');
 });
 
@@ -90,6 +91,7 @@ test('does not retry beyond one refresh or expose an unauthenticated options res
   let optionCalls = 0;
   let refreshCalls = 0;
   const session = new AuthSession(async (url) => {
+    if (url === '/api/auth/me') return json({ ownerId: '123e4567-e89b-42d3-a456-426614174000', name: 'Student', email: 'student@example.com', role: 'student' });
     if (url === '/api/auth/refresh') {
       refreshCalls++;
       return json({ accessToken: `token-${refreshCalls}` });
@@ -107,6 +109,7 @@ test('a refresh resolving after confirmed logout cannot restore its bearer', asy
   const lateRefresh = deferred();
   let refreshCalls = 0;
   const session = new AuthSession(async (url) => {
+    if (url === '/api/auth/me') return json({ ownerId: '123e4567-e89b-42d3-a456-426614174000', name: 'Student', email: 'student@example.com', role: 'student' });
     if (url === '/api/auth/refresh') {
       refreshCalls++;
       return refreshCalls === 1
@@ -131,6 +134,7 @@ test('a late options 401 cannot start refresh after local auth is cleared', asyn
   let refreshCalls = 0;
   let optionsCalls = 0;
   const session = new AuthSession(async (url) => {
+    if (url === '/api/auth/me') return json({ ownerId: '123e4567-e89b-42d3-a456-426614174000', name: 'Student', email: 'student@example.com', role: 'student' });
     if (url === '/api/auth/refresh') {
       refreshCalls++;
       return json({ accessToken: 'before-clear' });

@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { parsePracticeDifficulty, type PracticeDifficulty } from './language-practice-session-store';
+import { practiceTopicLabel } from './practice-topic-labels';
+import { parsePracticeParameters, type PracticeParameter } from './practice-catalogue';
+import { unassessedCoverage, validateParameterCoverage, type ParameterCoverage } from './parameter-coverage';
 import type { QueryExecutor, QueryResult } from '../auth/identity-store';
 import type { CompletedOwnedTurnProjection, LanguagePracticeReportFallback } from './language-practice-report-fallback';
 import { buildLanguagePracticeReportFallback } from './language-practice-report-fallback';
@@ -11,6 +15,7 @@ export interface LanguagePracticeReport extends LanguagePracticeReportFallback {
   sessionId: string;
   createdAt: string;
   generatedWithAi: boolean;
+  parameterCoverage: ParameterCoverage[];
 }
 
 export type BeginAiReportResult =
@@ -23,6 +28,8 @@ export type BeginAiReportResult =
       turns: CompletedOwnedTurnProjection[];
       topic: string;
       level: string;
+      difficulty: PracticeDifficulty | null;
+      parameters: PracticeParameter[];
     };
 
 export class LanguagePracticeReportStoreError extends Error {
@@ -41,14 +48,16 @@ export class LanguagePracticeReportAdmissionError extends Error {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const LOCK_SESSION_SQL = `
-  SELECT status, expires_at, active_turn_lease_token, topic, level,
+  SELECT status, expires_at, active_turn_lease_token, topic, level, difficulty, parameters_snapshot, conversation_theme_snapshot,
     expires_at <= clock_timestamp() AS elapsed
   FROM lingualoop_language_practice_sessions
   WHERE owner_id = $1::uuid AND id = $2::uuid
   FOR UPDATE
 `;
 const FIND_REPORT_SQL = `
-  SELECT r.content, r.generated_with_ai, r.created_at
+  SELECT r.content, r.generated_with_ai, r.created_at, r.parameter_coverage, s.parameters_snapshot,
+    ARRAY(SELECT t.sequence FROM lingualoop_language_practice_turns AS t
+      WHERE t.session_id = s.id AND t.status = 'COMPLETED' AND btrim(t.transcript) <> '') AS student_sequences
   FROM lingualoop_language_practice_reports AS r
   INNER JOIN lingualoop_language_practice_sessions AS s ON s.id = r.session_id
   WHERE s.owner_id = $1::uuid AND s.id = $2::uuid
@@ -67,13 +76,13 @@ const COMPLETED_TURNS_SQL = `
   ORDER BY sequence ASC
 `;
 const INSERT_REPORT_SQL = `
-  INSERT INTO lingualoop_language_practice_reports (session_id, content, generated_with_ai)
-  VALUES ($1::uuid, $2::jsonb, FALSE)
+  INSERT INTO lingualoop_language_practice_reports (session_id, content, generated_with_ai, parameter_coverage)
+  VALUES ($1::uuid, $2::jsonb, FALSE, $3::jsonb)
   ON CONFLICT (session_id) DO NOTHING
 `;
 const INSERT_AI_REPORT_SQL = `
-  INSERT INTO lingualoop_language_practice_reports (session_id, content, generated_with_ai)
-  VALUES ($1::uuid, $2::jsonb, TRUE)
+  INSERT INTO lingualoop_language_practice_reports (session_id, content, generated_with_ai, parameter_coverage)
+  VALUES ($1::uuid, $2::jsonb, TRUE, $3::jsonb)
   ON CONFLICT (session_id) DO NOTHING
 `;
 const CLAIM_REPORT_SQL = `
@@ -85,7 +94,7 @@ const CLAIM_REPORT_SQL = `
   RETURNING claim_token
 `;
 const LOCK_VALID_CLAIM_SQL = `
-  SELECT c.claim_token
+  SELECT c.claim_token, s.parameters_snapshot
   FROM lingualoop_language_practice_report_claims AS c
   INNER JOIN lingualoop_language_practice_sessions AS s ON s.id = c.session_id
   WHERE s.owner_id = $1::uuid AND s.id = $2::uuid AND c.claim_token = $3::uuid
@@ -172,8 +181,15 @@ function report(rowValue: unknown, sessionId: string): LanguagePracticeReport {
     };
   });
   if (row.created_at === undefined) throw new LanguagePracticeReportStoreError();
+  const parameters = parsePracticeParameters(row.parameters_snapshot ?? []);
+  // Historical reports are returned without a new paid request. Empty legacy coverage is unassessed.
+  const coverage = row.parameter_coverage ?? [];
+  const parameterCoverage = Array.isArray(coverage) && coverage.length === 0
+    ? unassessedCoverage(parameters) : validateParameterCoverage(coverage, parameters,
+      new Set(Array.isArray(row.student_sequences) ? row.student_sequences as number[] : []));
   return {
     sessionId,
+    parameterCoverage,
     summary: content.summary,
     corrections,
     strengths: [...content.strengths] as string[],
@@ -203,6 +219,25 @@ export class LanguagePracticeReportStore {
     if (!executor || typeof executor.withTransaction !== 'function') throw new TypeError('A transactional query executor is required.');
   }
 
+  /** Read-only teacher projection: same durable parser, no student impersonation or generation. */
+  async findTeacherReport(teacherId: string, practiceId: string, sessionId: string): Promise<LanguagePracticeReport | null> {
+    uuid(teacherId);
+    uuid(practiceId);
+    uuid(sessionId);
+    try {
+      const result = rows(await this.executor.query(`
+        SELECT r.content, r.generated_with_ai, r.created_at, r.parameter_coverage, s.parameters_snapshot,
+          ARRAY(SELECT t.sequence FROM lingualoop_language_practice_turns AS t
+            WHERE t.session_id = s.id AND t.status = 'COMPLETED' AND btrim(t.transcript) <> '') AS student_sequences
+        FROM lingualoop_language_practice_reports AS r
+        INNER JOIN lingualoop_language_practice_sessions AS s ON s.id = r.session_id
+        INNER JOIN lingualoop_practices AS p ON p.id = s.practice_id
+        WHERE p.teacher_id = $1::uuid AND p.id = $2::uuid AND s.id = $3::uuid
+      `, [teacherId, practiceId, sessionId]), 0, 1);
+      return result.length ? report(result[0], sessionId) : null;
+    } catch { throw new LanguagePracticeReportStoreError(); }
+  }
+
   async beginAiReport(ownerId: string, sessionId: string): Promise<BeginAiReportResult> {
     uuid(ownerId);
     uuid(sessionId);
@@ -229,11 +264,13 @@ export class LanguagePracticeReportStore {
         const turnRows = rows(await tx.query(COMPLETED_TURNS_SQL, [ownerId, sessionId]), 0, 256);
         const turns = turnRows.map(completedTurn);
         if (turns.length === 0) {
-          await tx.query(INSERT_REPORT_SQL, [sessionId, JSON.stringify(buildLanguagePracticeReportFallback(turns))]);
+          await tx.query(INSERT_REPORT_SQL, [sessionId, JSON.stringify(buildLanguagePracticeReportFallback(turns)), JSON.stringify(unassessedCoverage(parsePracticeParameters(sessionRow.parameters_snapshot ?? [])))]);
           const stored = rows(await tx.query(FIND_REPORT_SQL, [ownerId, sessionId]), 1, 1)[0];
           return { value: { kind: 'no_evidence' as const, report: report(stored, sessionId) } };
         }
 
+        // Validate persisted context before acquiring a durable claim; SQL NULL stays unknown.
+        const difficulty = parsePracticeDifficulty(sessionRow.difficulty);
         const token = randomUUID();
         const claim = rows(await tx.query(CLAIM_REPORT_SQL, [sessionId, token]), 0, 1);
         if (claim.length === 0) return { value: { kind: 'busy' as const } };
@@ -241,7 +278,7 @@ export class LanguagePracticeReportStore {
         if (claimRow.claim_token !== token || typeof sessionRow.topic !== 'string' || typeof sessionRow.level !== 'string') {
           throw new LanguagePracticeReportStoreError();
         }
-        return { value: { kind: 'claimed' as const, token, turns, topic: sessionRow.topic, level: sessionRow.level } };
+        return { value: { kind: 'claimed' as const, token, turns, topic: practiceTopicLabel(sessionRow.topic, sessionRow.conversation_theme_snapshot), level: sessionRow.level, difficulty, parameters: parsePracticeParameters(sessionRow.parameters_snapshot ?? []) } };
       });
       if ('admission' in result && result.admission) throw new LanguagePracticeReportAdmissionError(result.admission);
       if (!('value' in result)) throw new LanguagePracticeReportStoreError();
@@ -267,18 +304,22 @@ export class LanguagePracticeReportStore {
     ownerId: string,
     sessionId: string,
     token: string,
-    content: LanguagePracticeReportFallback,
+    content: LanguagePracticeReportFallback & { parameterCoverage?: ParameterCoverage[] },
   ): Promise<LanguagePracticeReport | null> {
     uuid(ownerId);
     uuid(sessionId);
     uuid(token);
     // Reuse the durable report parser as the exact content/size validator before any write.
-    report({ content, generated_with_ai: true, created_at: new Date() }, sessionId);
+    const { parameterCoverage, ...legacyContent } = content;
+    report({ content: legacyContent, generated_with_ai: true, created_at: new Date() }, sessionId);
     try {
       const result = await this.executor.withTransaction(async (tx) => {
         const claim = rows(await tx.query(LOCK_VALID_CLAIM_SQL, [ownerId, sessionId, token]), 0, 1);
         if (claim.length === 0) return { value: null };
-        await tx.query(INSERT_AI_REPORT_SQL, [sessionId, JSON.stringify(content)]);
+        const parameters = parsePracticeParameters(object(claim[0]).parameters_snapshot ?? []);
+        const turns = parameters.length ? rows(await tx.query(COMPLETED_TURNS_SQL, [ownerId, sessionId]), 0, 256).map(completedTurn) : [];
+        const coverage = validateParameterCoverage(parameterCoverage ?? [], parameters, new Set(turns.filter(turn => turn.transcript.trim()).map(turn => turn.sequence)));
+        await tx.query(INSERT_AI_REPORT_SQL, [sessionId, JSON.stringify(legacyContent), JSON.stringify(coverage)]);
         await tx.query(DELETE_CLAIM_SQL, [sessionId, token]);
         const stored = rows(await tx.query(FIND_REPORT_SQL, [ownerId, sessionId]), 1, 1)[0];
         return { value: report(stored, sessionId) };
@@ -316,7 +357,7 @@ export class LanguagePracticeReportStore {
 
         const turnRows = rows(await tx.query(COMPLETED_TURNS_SQL, [ownerId, sessionId]), 0, 256);
         const fallback = buildLanguagePracticeReportFallback(turnRows.map(completedTurn));
-        await tx.query(INSERT_REPORT_SQL, [sessionId, JSON.stringify(fallback)]);
+        await tx.query(INSERT_REPORT_SQL, [sessionId, JSON.stringify(fallback), JSON.stringify(unassessedCoverage(parsePracticeParameters(sessionRow.parameters_snapshot ?? [])))]);
         const stored = rows(await tx.query(FIND_REPORT_SQL, [ownerId, sessionId]), 1, 1)[0];
         return { value: report(stored, sessionId) };
       });

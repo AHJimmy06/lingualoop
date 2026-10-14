@@ -7,7 +7,7 @@ const {
 
 const OWNER = '123e4567-e89b-42d3-a456-426614174000';
 const SESSION = '323e4567-e89b-42d3-a456-426614174000';
-const IDENTITY = { issuer: 'google', subject: 'verified-google-subject' };
+const IDENTITY = { issuer: 'google', subject: 'verified-google-subject', email: 'approved@example.test' };
 const NOW = 1_800_000_000_000;
 const ID_TOKEN = 'untrusted-google-id-token';
 const ACCESS = 'signed-access-token';
@@ -110,6 +110,27 @@ test('invalid token and non-Google verifier identity are rejected before all sto
   const bareIdentity = fixture();
   await assertGenericFailure(bareIdentity.login.issue({ issuer: 'google', subject: 'caller' }));
   assert.deepEqual(bareIdentity.events, []);
+});
+
+test('unapproved email rejects generically before session, refresh or token issuance', async () => {
+  const f = fixture({ identityStore: { async getOrCreateOwner(identity) {
+    f.events.push('approval-rejected');
+    assert.equal(identity.email, IDENTITY.email);
+    throw Error('approval missing for private email');
+  } } });
+  await assertGenericFailure(f.login.issue(ID_TOKEN), 'private email');
+  assert.deepEqual(f.events, ['verify', 'approval-rejected']);
+  assert.deepEqual(f.calls.session, []);
+  assert.deepEqual(f.calls.token, []);
+});
+
+test('verifier results without a normalized email never reach admission', async () => {
+  for (const email of [undefined, '', 'UPPER@example.test', 'invalid']) {
+    const f = fixture({ googleIdentityService: { async verify() { return { ...IDENTITY, email }; } } });
+    await assertGenericFailure(f.login.issue(ID_TOKEN));
+    assert.deepEqual(f.calls.identity, []);
+    assert.deepEqual(f.calls.session, []);
+  }
 });
 
 test('persists the generated hash only and returns both credentials only after complete success', async () => {

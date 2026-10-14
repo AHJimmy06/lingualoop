@@ -21,7 +21,7 @@ test('zero turns uses the original empty-session fallback and no unsupported fie
   });
 });
 
-test('one completed turn preserves the original Spanish fallback strings and valid evidence', () => {
+test('one completed turn preserves exact corrections with neutral count evidence', () => {
   assert.deepEqual(buildLanguagePracticeReportFallback([
     turn(7, '  I ready.  ', evidence('  I am ready.  ', '  Use the present form.  ')),
   ]), {
@@ -32,7 +32,7 @@ test('one completed turn preserves the original Spanish fallback strings and val
       correctedPhrase: 'I am ready.',
       explanation: 'Use the present form.',
     }],
-    strengths: ['Sostuvo 1 intercambio completo en inglés durante la práctica.'],
+    strengths: [],
     recommendations: [
       'Practique nuevamente las frases corregidas y úselas en ejemplos propios antes de la próxima sesión.',
     ],
@@ -47,7 +47,7 @@ test('many turns produce a bounded Spanish summary and exact evidence-backed cou
   ]);
   assert.equal(report.summary, 'Se completaron 3 intervenciones en inglés. El informe conserva 2 correcciones concretas respaldadas por la sesión.');
   assert.equal(report.corrections.length, 2);
-  assert.equal(report.strengths.length, 1);
+  assert.equal(report.strengths.length, 0);
   assert.equal(report.recommendations.length, 1);
   assert.ok(report.summary.length <= 400);
 });
@@ -64,7 +64,7 @@ test('malformed, missing, wrong-shaped, and empty evidence is omitted without in
   assert.equal(report.corrections.length, 0);
   assert.equal(report.summary, 'Se completaron 6 intervenciones en inglés. El informe conserva 0 correcciones concretas respaldadas por la sesión.');
   assert.deepEqual(report.recommendations, [
-    'Realice otra sesión sobre el mismo tema para ampliar la evidencia y consolidar la fluidez conversacional.',
+    'Realice otra sesión sobre el mismo tema y desarrolle sus ideas con ejemplos para ampliar la evidencia.',
   ]);
   assert.doesNotMatch(JSON.stringify(report), /pronunciación|CEFR|A1|B2|fluidez nivel/i);
 });
@@ -92,6 +92,6 @@ test('the report caps corrections at twenty and completed turns at 256', () => {
 
   const bounded = buildLanguagePracticeReportFallback(Array.from({ length: 300 }, (_, index) => turn(index + 1)));
   assert.match(bounded.summary, /^Se completaron 256 intervenciones/);
-  assert.equal(bounded.strengths.length, 1);
+  assert.equal(bounded.strengths.length, 0);
   assert.equal(bounded.recommendations.length, 1);
 });

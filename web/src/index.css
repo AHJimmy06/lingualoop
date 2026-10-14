@@ -5,6 +5,10 @@
 
 @custom-variant dark (&:is(.dark *));
 
+@utility authenticated-page {
+  @apply w-full min-w-0 px-4 py-8 sm:px-6 sm:py-12 lg:px-8;
+}
+
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: 'Inter Variable', sans-serif;

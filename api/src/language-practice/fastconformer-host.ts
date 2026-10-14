@@ -13,7 +13,7 @@ import {
 } from './fastconformer-protocol'
 
 export { FASTCONFORMER_MODEL_ID } from './fastconformer-protocol'
-const MAX_STARTUP_MS = 30_000
+const MAX_STARTUP_MS = 60_000
 const MAX_STDOUT_BYTES = 8_192
 const MAX_STDERR_BYTES = 4_000
 const MAX_REQUEST_MS = 90_000
@@ -39,9 +39,67 @@ type PendingRequest = {
   timer: NodeJS.Timeout
 }
 
-export class FastConformerNoSpeechError extends Error {
+const DIAGNOSTICS = {
+  startup_timeout: ['startup', 'FastConformer startup timed out'],
+  startup_spawn: ['startup', 'Could not start FastConformer worker'],
+  startup_process_error: ['startup', 'Could not start FastConformer worker'],
+  startup_stream_error: ['startup', 'Could not start FastConformer worker'],
+  startup_closed: ['startup', 'FastConformer worker closed during startup'],
+  startup_output_limit: ['startup', 'FastConformer worker exceeded startup output limit'],
+  startup_malformed: ['startup', 'FastConformer worker returned malformed startup output'],
+  startup_identity: ['startup', 'FastConformer worker reported an unexpected model identity'],
+  startup_unsolicited: ['startup', 'FastConformer worker sent unsolicited startup output'],
+  startup_cancelled: ['startup', 'FastConformer startup cancelled'],
+  request_timeout: ['request', 'FastConformer transcription timed out'],
+  request_process_error: ['request', 'FastConformer worker failed'],
+  request_stream_error: ['request', 'FastConformer worker failed'],
+  request_write: ['request', 'FastConformer worker failed'],
+  request_closed: ['request', 'FastConformer worker closed'],
+  request_oversized: ['request', 'FastConformer worker returned an oversized response'],
+  request_unsolicited: ['request', 'FastConformer worker sent unsolicited output'],
+  request_invalid_response: ['request', 'FastConformer worker returned an invalid response'],
+  request_invalid_path: ['request', 'Invalid absolute audio path'],
+  request_busy: ['request', 'FastConformer request already in flight'],
+  request_cancelled: ['request', 'FastConformer transcription cancelled'],
+  host_stopped: ['lifecycle', 'FastConformer host is stopped or closed'],
+  no_speech: ['request', 'No speech was recognized.'],
+  preparation_input: ['preparation', 'Audio preparation failed'],
+  preparation_io: ['preparation', 'Audio preparation failed'],
+  preparation_spawn: ['preparation', 'Audio preparation failed'],
+  preparation_process: ['preparation', 'Audio preparation failed'],
+  preparation_timeout: ['preparation', 'Audio preparation failed'],
+  preparation_wav: ['preparation', 'Audio preparation failed'],
+  preparation_callback: ['preparation', 'Audio preparation failed'],
+  preparation_cleanup: ['preparation', 'Audio preparation failed'],
+} as const
+
+export type SttDiagnosticCode = keyof typeof DIAGNOSTICS
+export type SttDiagnostic = {
+  code: SttDiagnosticCode
+  component: 'fastconformer' | 'audio_preparation'
+  phase: 'startup' | 'request' | 'lifecycle' | 'preparation'
+}
+// Private provenance prevents forged or mutated public error properties entering logs.
+const trustedDiagnostics = new WeakMap<object, SttDiagnostic>()
+export class SttDiagnosticError extends Error {
+  constructor(code: SttDiagnosticCode) {
+    const entry = Object.prototype.hasOwnProperty.call(DIAGNOSTICS, code) ? DIAGNOSTICS[code] : undefined
+    super(entry ? entry[1] : 'STT failed')
+    if (entry) trustedDiagnostics.set(this, {
+      code, component: code.startsWith('preparation_') ? 'audio_preparation' : 'fastconformer', phase: entry[0],
+    })
+  }
+}
+
+export function getSttDiagnostic(error: unknown): SttDiagnostic | undefined {
+  if ((typeof error !== 'object' || error === null) && typeof error !== 'function') return undefined
+  const diagnostic = trustedDiagnostics.get(error as object)
+  return diagnostic ? { ...diagnostic } : undefined
+}
+
+export class FastConformerNoSpeechError extends SttDiagnosticError {
   constructor() {
-    super('No speech was recognized.')
+    super('no_speech')
     this.name = 'FastConformerNoSpeechError'
   }
 }
@@ -62,6 +120,7 @@ export class FastConformerHost {
   private stdout = ''
   private responseBuffer = Buffer.alloc(0)
   private stderr = ''
+  private stopped = false
   private closed = false
   private ready = false
   private replacementEligible = false
@@ -83,10 +142,10 @@ export class FastConformerHost {
   }
 
   start(): Promise<void> {
+    if (this.stopped || this.shutdownPromise || this.closed) return Promise.reject(new SttDiagnosticError('host_stopped'))
     if (this.startPromise) return this.startPromise
-    if (this.shutdownPromise || this.closed) return Promise.reject(new Error('FastConformer host is stopped'))
     this.startPromise = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => this.fail('FastConformer startup timed out'), this.config.startupTimeoutMs)
+      const timer = setTimeout(() => this.fail('startup_timeout'), this.config.startupTimeoutMs)
       this.startup = { resolve, reject, timer }
       try {
         const child = this.spawnChild(this.config.pythonExecutable, [
@@ -96,9 +155,9 @@ export class FastConformerHost {
         this.child = child
         const onStreamError = () => {
           if (this.child !== child) return
-          if (this.startup) this.fail('Could not start FastConformer worker')
-          else if (this.pendingRequest) this.failRequest('FastConformer worker failed')
-          else {
+          if (this.startup) this.fail('startup_stream_error')
+          else if (this.pendingRequest) this.failRequest('request_stream_error')
+          else if (this.ready) {
             this.ready = false
             void this.shutdown()
           }
@@ -107,8 +166,8 @@ export class FastConformerHost {
         child.stderr?.on('error', onStreamError)
         child.stdin?.on('error', () => {
           if (this.child !== child) return
-          if (this.startup) this.fail('Could not start FastConformer worker')
-          else if (this.pendingRequest) this.failRequest('FastConformer worker failed')
+          if (this.startup) this.fail('startup_stream_error')
+          else if (this.pendingRequest) this.failRequest('request_stream_error')
           else if (this.ready) {
             this.ready = false
             void this.shutdown()
@@ -122,9 +181,9 @@ export class FastConformerHost {
         })
         child.once('error', () => {
           if (this.child !== child) return
-          if (this.startup) this.fail('Could not start FastConformer worker')
-          else if (this.pendingRequest) this.failRequest('FastConformer worker failed')
-          else {
+          if (this.startup) this.fail('startup_process_error')
+          else if (this.pendingRequest) this.failRequest('request_process_error')
+          else if (this.ready) {
             this.ready = false
             void this.shutdown()
           }
@@ -134,43 +193,49 @@ export class FastConformerHost {
           const wasReady = this.ready
           this.closed = true
           this.ready = false
-          if (this.startup) this.fail('FastConformer worker closed during startup')
+          if (this.startup) this.fail('startup_closed')
           else {
-            this.replacementEligible = wasReady && !this.shutdownPromise
+            // Startup failure eligibility survives cleanup's close event.
+            if (wasReady) this.replacementEligible = !this.stopped && !this.shutdownPromise
             if (this.pendingRequest) {
               const request = this.pendingRequest
               this.clearPendingRequest(request)
-              request.reject(new Error('FastConformer worker closed'))
+              request.reject(new SttDiagnosticError('request_closed'))
               this.responseBuffer = Buffer.alloc(0)
             }
           }
         })
       } catch {
-        this.fail('Could not start FastConformer worker')
+        this.fail('startup_spawn')
       }
     })
     return this.startPromise
   }
 
   transcribe(audioPath: string): Promise<string> {
-    if (this.shutdownPromise) return Promise.reject(new Error('FastConformer host is stopped or closed'))
-    if (this.pendingRequest) return Promise.reject(new Error('FastConformer request already in flight'))
+    if (this.stopped || (this.shutdownPromise && !this.replacementEligible)) {
+      return Promise.reject(new SttDiagnosticError('host_stopped'))
+    }
+    if (this.pendingRequest) return Promise.reject(new SttDiagnosticError('request_busy'))
     if (typeof audioPath !== 'string' || !isAbsolute(audioPath)) {
-      return Promise.reject(new Error('Invalid absolute audio path'))
+      return Promise.reject(new SttDiagnosticError('request_invalid_path'))
     }
 
     const id = randomUUID()
     let line: string
     try { line = serializeRequest(id, audioPath) } catch {
-      return Promise.reject(new Error('Invalid absolute audio path'))
+      return Promise.reject(new SttDiagnosticError('request_invalid_path'))
     }
 
     if (this.closed) {
       if (!this.replacementEligible || this.replacementUsed) {
-        return Promise.reject(new Error('FastConformer host is stopped or closed'))
+        return Promise.reject(new SttDiagnosticError('host_stopped'))
       }
       this.replacementUsed = true
       this.replacementEligible = false
+      // Only an observed close permits clearing cleanup and detaching the old child.
+      this.child = undefined
+      this.shutdownPromise = undefined
       this.startPromise = undefined
       this.closed = false
       this.stdout = ''
@@ -178,12 +243,12 @@ export class FastConformerHost {
       this.stderr = ''
     }
     if (this.startPromise && !this.ready && !this.startup) {
-      return Promise.reject(new Error('FastConformer host is stopped or closed'))
+      return Promise.reject(new SttDiagnosticError('host_stopped'))
     }
     const timeoutMs = this.config.requestTimeoutMs ?? DEFAULT_REQUEST_MS
     const promise = new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.rejectRequest(id, new Error('FastConformer transcription timed out'))
+        this.rejectRequest(id, new SttDiagnosticError('request_timeout'))
         void this.shutdown()
       }, timeoutMs)
       this.pendingRequest = { id, resolve, reject, timer }
@@ -196,15 +261,21 @@ export class FastConformerHost {
         if (!this.child?.stdin || this.closed) throw new Error('closed')
         this.child.stdin.write(line)
       } catch {
-        this.failRequest('FastConformer worker failed')
+        this.failRequest('request_write')
       }
-    }).catch(() => {
-      this.rejectRequest(id, new Error('FastConformer worker failed to start'))
+    }).catch((error: unknown) => {
+      this.rejectRequest(id, getSttDiagnostic(error) ? error as Error : new SttDiagnosticError('startup_spawn'))
     })
     return promise
   }
 
   shutdown(): Promise<void> {
+    this.stopped = true
+    this.replacementEligible = false
+    return this.cleanupChild()
+  }
+
+  private cleanupChild(): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise
     this.shutdownPromise = this.stopChild()
     return this.shutdownPromise
@@ -218,7 +289,7 @@ export class FastConformerHost {
     }
     this.stdout += chunk.toString()
     if (Buffer.byteLength(this.stdout) > MAX_STDOUT_BYTES) {
-      this.fail('FastConformer worker exceeded startup output limit')
+      this.fail('startup_output_limit')
       return
     }
     const newline = this.stdout.indexOf('\n')
@@ -227,14 +298,12 @@ export class FastConformerHost {
     try {
       parseReady(line, this.config.expectedSha256)
     } catch (error) {
-      const message = error instanceof FastConformerProtocolError && error.code === 'INVALID_LINE'
-        ? 'FastConformer worker returned malformed startup output'
-        : 'FastConformer worker reported an unexpected model identity'
-      this.fail(message)
+      this.fail(error instanceof FastConformerProtocolError && error.code === 'INVALID_LINE'
+        ? 'startup_malformed' : 'startup_identity')
       return
     }
     if (/\S/.test(this.stdout.slice(newline + 1))) {
-      this.fail('FastConformer worker sent unsolicited startup output')
+      this.fail('startup_unsolicited')
       return
     }
     const startup = this.startup
@@ -247,19 +316,19 @@ export class FastConformerHost {
 
   private readResponse(chunk: Buffer): void {
     if (!this.pendingRequest) {
-      if (chunk.length > 0) this.fail('FastConformer worker sent unsolicited output')
+      if (chunk.length > 0) this.fail('request_unsolicited')
       return
     }
     this.responseBuffer = Buffer.concat([this.responseBuffer, chunk])
     const newline = this.responseBuffer.indexOf(0x0a)
     const lineBytes = newline < 0 ? this.responseBuffer.length : newline
     if (lineBytes > MAX_PROTOCOL_LINE_BYTES || (newline < 0 && lineBytes > MAX_STDOUT_BYTES)) {
-      this.failRequest('FastConformer worker returned an oversized response')
+      this.failRequest('request_oversized')
       return
     }
     if (newline < 0) return
     if (newline + 1 !== this.responseBuffer.length) {
-      this.failRequest('FastConformer worker sent unsolicited output')
+      this.failRequest('request_unsolicited')
       return
     }
 
@@ -272,29 +341,33 @@ export class FastConformerHost {
       if ('code' in result && result.code === FASTCONFORMER_NO_SPEECH_CODE) request.reject(new FastConformerNoSpeechError())
       else if ('transcript' in result) request.resolve(result.transcript)
     } catch {
-      this.failRequest('FastConformer worker returned an invalid response')
+      this.failRequest('request_invalid_response')
     }
   }
 
-  private fail(message: string): void {
+  private fail(code: SttDiagnosticCode): void {
     const startup = this.startup
     if (!startup) {
       if (this.ready) {
         this.ready = false
-        this.failRequest(message)
+        this.failRequest(code)
         void this.shutdown()
       }
       return
     }
     this.startup = undefined
     clearTimeout(startup.timer)
-    startup.reject(new Error(message))
-    void this.shutdown()
+    const error = new SttDiagnosticError(code)
+    startup.reject(error)
+    // Reject before shutdown can replace the startup reason with cancellation.
+    if (this.pendingRequest) this.rejectRequest(this.pendingRequest.id, error)
+    this.replacementEligible = !this.stopped && !this.replacementUsed
+    void this.cleanupChild()
   }
 
-  private failRequest(message: string): void {
+  private failRequest(code: SttDiagnosticCode): void {
     if (!this.pendingRequest) return
-    this.rejectRequest(this.pendingRequest.id, new Error(message))
+    this.rejectRequest(this.pendingRequest.id, new SttDiagnosticError(code))
     this.ready = false
     this.responseBuffer = Buffer.alloc(0)
     void this.shutdown()
@@ -317,17 +390,20 @@ export class FastConformerHost {
     if (startup) {
       this.startup = undefined
       clearTimeout(startup.timer)
-      startup.reject(new Error('FastConformer startup cancelled'))
+      startup.reject(new SttDiagnosticError('startup_cancelled'))
     }
     const pending = this.pendingRequest
     if (pending) {
       this.clearPendingRequest(pending)
-      pending.reject(new Error('FastConformer transcription cancelled'))
+      pending.reject(new SttDiagnosticError('request_cancelled'))
     }
     this.ready = false
     const child = this.child
     if (!child || this.closed) return
-    const closed = new Promise<void>((resolve) => child.once('close', () => { this.closed = true; resolve() }))
+    const closed = new Promise<void>((resolve) => child.once('close', () => {
+      if (this.child === child) this.closed = true
+      resolve()
+    }))
     try { this.signalTree(child, 'SIGTERM') } catch { /* continue bounded cleanup */ }
     if (await this.waitForClose(closed, TERM_GRACE_MS)) return
     try { this.signalTree(child, 'SIGKILL') } catch { /* continue bounded cleanup */ }

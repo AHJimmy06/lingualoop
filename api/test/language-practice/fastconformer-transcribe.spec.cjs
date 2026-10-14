@@ -71,6 +71,13 @@ test('maps legacy no-speech results to a fixed typed safe error', async () => {
     assert.doesNotMatch(error.message, /private|silent\.wav/);
     return true;
   });
+  assert.equal(child.stdin.read(), null);
+  const next = host.transcribe('/audio/explicit-next.wav');
+  await new Promise((resolve) => setImmediate(resolve));
+  const nextRequest = JSON.parse(child.stdin.read().toString());
+  assert.equal(nextRequest.audioPath, '/audio/explicit-next.wav');
+  child.stdout.write(result(nextRequest.id));
+  assert.equal(await next, 'recognized words');
   await host.shutdown();
 });
 
@@ -90,6 +97,9 @@ test('mismatched, malformed, oversized, and unsolicited results fail closed', as
       }
       await assert.rejects(pending, (error) => {
         assert.ok(error instanceof Error);
+        const { getSttDiagnostic } = require('../../dist/language-practice/fastconformer-host.js');
+        const codes = { mismatch: 'request_invalid_response', malformed: 'request_invalid_response', oversized: 'request_oversized', unsolicited: 'request_unsolicited' };
+        assert.deepEqual(getSttDiagnostic(error), { code: codes[scenario], component: 'fastconformer', phase: 'request' });
         assert.doesNotMatch(error.message, /private\.wav|worker\.py|model\.nemo/);
         return true;
       });
@@ -117,6 +127,8 @@ test('stdin errors fail closed without exposing process details, including after
   await new Promise((resolve) => setImmediate(resolve));
   const rejected = assert.rejects(pending, (error) => {
     assert.equal(error.message, 'FastConformer worker failed');
+    const { getSttDiagnostic } = require('../../dist/language-practice/fastconformer-host.js');
+    assert.deepEqual(getSttDiagnostic(error), { code: 'request_stream_error', component: 'fastconformer', phase: 'request' });
     assert.doesNotMatch(error.message, /EPIPE|private\.wav|worker\.py|model\.nemo/);
     return true;
   });
@@ -132,7 +144,11 @@ test('timeout, child close, and shutdown reject pending requests and clear their
   await t.test('timeout', async () => {
     const { host, child, signals } = harness({ requestTimeoutMs: 5 });
     await start(host, child);
-    await assert.rejects(host.transcribe('/audio/private.wav'), /timed out/);
+    await assert.rejects(host.transcribe('/audio/private.wav'), (error) => {
+      const { getSttDiagnostic } = require('../../dist/language-practice/fastconformer-host.js');
+      assert.deepEqual(getSttDiagnostic(error), { code: 'request_timeout', component: 'fastconformer', phase: 'request' });
+      return true;
+    });
     assert.deepEqual(signals, ['SIGTERM']);
     await host.shutdown();
   });

@@ -105,20 +105,21 @@ test('Nest provider assembly eagerly constructs one safe adapter and delegates o
     failTurn: async (...args) => { calls.push(['failTurn', ...args]); return true; },
     getCompletedHistory: async (...args) => { calls.push(['getCompletedHistory', ...args]); return []; },
   };
-  const sessionStore = { getSession: async (...args) => { calls.push(['getSession', ...args]); return { status: 'ACTIVE', level: 'A2', topic: 'work' }; } };
+  const sessionStore = { getOwnedSnapshot: async (...args) => { calls.push(['getOwnedSnapshot', ...args]); return { level: 'A2', topic: 'work', difficulty: 'hard', parameters: [] }; } };
   const audio = { transcribe: async (...args) => { calls.push(['transcribe', ...args]); return 'hello'; } };
   const piper = { getHost: (language) => { calls.push(['getHost', language]); return { synthesize: async (text) => { calls.push(['synthesize', text]); return Buffer.from('wav'); } }; } };
   const coach = { respond: async (input) => { calls.push(['coach', input]); return { correctedPhrase: 'hola', feedback: 'ok', assistantResponse: 'Good morning.' }; } };
   const service = serviceProvider.useFactory(store, sessionStore, audio, piper, coach);
   await service.processTurn(ownerId, sessionId, clientTurnId, { buffer: Buffer.from('audio'), mimeType: 'audio/wav' });
   assert.deepEqual(calls.map(([name]) => name), [
-    'reserveTurn', 'getSession', 'getCompletedHistory', 'transcribe', 'coach', 'getHost', 'synthesize',
+    'reserveTurn', 'getOwnedSnapshot', 'getCompletedHistory', 'transcribe', 'coach', 'getHost', 'synthesize',
     'completeTurn', 'reserveTurn',
   ]);
   assert.deepEqual(calls[0], ['reserveTurn', ownerId, sessionId, clientTurnId]);
-  assert.deepEqual(calls[1], ['getSession', ownerId, sessionId]);
+  assert.deepEqual(calls[1], ['getOwnedSnapshot', ownerId, sessionId]);
   assert.deepEqual(calls[2], ['getCompletedHistory', ownerId, sessionId]);
   assert.deepEqual(calls[3], ['transcribe', Buffer.from('audio'), 'audio/wav']);
+  assert.equal(calls[4][1].difficulty, 'hard');
   assert.deepEqual(calls[5], ['getHost', 'en']);
   assert.deepEqual(calls[6], ['synthesize', 'Good morning.']);
   assert.deepEqual(calls[7], [

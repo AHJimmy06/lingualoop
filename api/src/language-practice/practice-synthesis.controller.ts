@@ -1,5 +1,6 @@
 import { Controller, Inject, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { ConfiguredVerifiedRequestGuard } from '../auth/google-auth.providers';
+import { RoleGuard, Roles } from '../auth/role.guard';
 import { PIPER_RUNTIME, type PiperHostLike } from './piper-runtime.providers';
 
 export class PracticeSynthesisBusyError extends Error {}
@@ -26,7 +27,8 @@ export class PracticeSynthesisController {
   constructor(@Inject(PIPER_RUNTIME) private readonly runtime: PiperRuntime) {}
 
   @Post('synthesize')
-  @UseGuards(ConfiguredVerifiedRequestGuard)
+  @UseGuards(ConfiguredVerifiedRequestGuard, RoleGuard)
+  @Roles('student')
   async synthesize(@Req() request: SynthesisRequest, @Res() response: SynthesisResponse): Promise<void> {
     this.setSafeHeaders(response);
     const body = request.body;

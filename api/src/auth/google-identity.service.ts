@@ -1,4 +1,5 @@
 import { OAuth2Client } from 'google-auth-library';
+import { normalizeEmail } from './account-role';
 
 const MAX_ID_TOKEN_LENGTH = 16_384;
 const MAX_SUBJECT_BYTES = 512;
@@ -21,6 +22,7 @@ export type GoogleTicketVerifier = (
 export interface GoogleIdentity {
   issuer: 'google';
   subject: string;
+  email: string;
 }
 
 export class InvalidGoogleIdTokenError extends Error {
@@ -74,9 +76,8 @@ export class GoogleIdentityService {
           payload.exp <= Math.floor(this.now() / 1_000)) {
         throw new InvalidGoogleIdTokenError();
       }
-      if (payload.email !== undefined && payload.email_verified !== true) {
-        throw new InvalidGoogleIdTokenError();
-      }
+      if (payload.email_verified !== true) throw new InvalidGoogleIdTokenError();
+      const email = normalizeEmail(payload.email);
       const subject = payload.sub;
       if (typeof subject !== 'string' || subject.length === 0 ||
           Buffer.byteLength(subject, 'utf8') > MAX_SUBJECT_BYTES ||
@@ -84,7 +85,7 @@ export class GoogleIdentityService {
           Buffer.from(subject, 'utf8').toString('utf8') !== subject) {
         throw new InvalidGoogleIdTokenError();
       }
-      return { issuer: 'google', subject };
+      return { issuer: 'google', subject, email };
     } catch {
       throw new InvalidGoogleIdTokenError();
     }

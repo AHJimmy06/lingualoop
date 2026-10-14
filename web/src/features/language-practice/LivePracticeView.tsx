@@ -16,6 +16,7 @@ import { LiveTurnController } from './react-live-turn';
 import { onRecordingActivity, ResponseAudioPlayback, ResponseAudioUrls } from './react-live-audio';
 import { PracticeRecorder } from './PracticeRecorder';
 import { PracticeScene } from './PracticeScene';
+import { difficultyLabel } from './practice-preferences';
 
 const topicLabels: Record<string, string> = {
   travel: 'Travel', work: 'Work', studies: 'Studies', 'everyday-conversation': 'Everyday conversation',
@@ -268,7 +269,7 @@ export function LivePracticeView() {
   };
 
   return (
-    <main className="mx-auto min-h-svh w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-10" aria-labelledby="session-title">
+    <main className="authenticated-page min-h-svh [overflow-wrap:anywhere] lg:flex lg:flex-col" aria-labelledby="session-title">
       <header className="mb-6 flex items-start justify-between gap-3 sm:mb-8">
         <div>
           <p className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-primary">Timed English practice</p>
@@ -290,15 +291,19 @@ export function LivePracticeView() {
           <p><strong>Level</strong> <span className="text-muted-foreground">{session.level}</span></p>
           <p><strong>Topic</strong> <span className="text-muted-foreground">{topicLabels[session.topic] || session.topic}</span></p>
           <p><strong>Duration</strong> <span className="text-muted-foreground">{session.durationMinutes} minutes</span></p>
+          <p><strong>Task difficulty</strong> <span className="text-muted-foreground">{difficultyLabel(session.difficulty)}</span></p>
         </section>
 
+        <div className="grid grid-cols-1 items-start gap-4 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:grid-rows-[auto_auto_1fr] lg:gap-x-6">
+        <div className="min-w-0 [&>section]:mb-0 lg:col-start-1 lg:row-start-1 lg:row-span-3 lg:self-center">
         <PracticeScene
           topic={session.topic}
           learnerState={learnerSpeaking ? 'speaking' : partnerSpeaking ? 'listening' : 'idle'}
           partnerState={partnerSpeaking ? 'speaking' : learnerSpeaking ? 'listening' : 'idle'}
         />
+        </div>
 
-        <section aria-labelledby="conversation-title" className="mb-8">
+        <section aria-labelledby="conversation-title" className="min-w-0 lg:col-start-2 lg:row-start-1">
           <h2 id="conversation-title" className="mb-4 text-lg font-semibold">Conversation so far</h2>
           {session.turns.length === 0
             ? <p className="py-3 text-sm text-muted-foreground">Your completed conversation turns will appear here.</p>
@@ -307,17 +312,17 @@ export function LivePracticeView() {
                 <p className="mb-3 text-xs font-medium text-muted-foreground">Turn {turn.sequence}</p>
                 <MessageGroup className="gap-3">
                   <Message align="end">
-                    <MessageContent><MessageHeader>You</MessageHeader><Bubble variant="tinted"><BubbleContent>{turn.transcript || 'No transcript was saved for this turn.'}</BubbleContent></Bubble></MessageContent>
+                    <MessageContent className="min-w-0 max-w-prose [overflow-wrap:anywhere]"><MessageHeader>You</MessageHeader><Bubble variant="tinted"><BubbleContent>{turn.transcript || 'No transcript was saved for this turn.'}</BubbleContent></Bubble></MessageContent>
                   </Message>
                   <Message align="start">
-                    <MessageContent><MessageHeader>Conversation partner</MessageHeader><Bubble variant="secondary"><BubbleContent>{turn.assistantResponse || 'No response text was saved for this turn.'}</BubbleContent></Bubble>{index === session.turns.length - 1 && audioUrl && <Button type="button" variant="ghost" size="icon" className="mt-1" title="Replay response" disabled={recorderBusy} onClick={() => void replayAudio()} aria-label="Replay response"><Volume2 aria-hidden="true" /></Button>}</MessageContent>
+                    <MessageContent className="min-w-0 max-w-prose [overflow-wrap:anywhere]"><MessageHeader>Conversation partner</MessageHeader><Bubble variant="secondary"><BubbleContent>{turn.assistantResponse || 'No response text was saved for this turn.'}</BubbleContent></Bubble>{index === session.turns.length - 1 && audioUrl && <Button type="button" variant="ghost" size="icon" className="mt-1" title="Replay response" disabled={recorderBusy} onClick={() => void replayAudio()} aria-label="Replay response"><Volume2 aria-hidden="true" /></Button>}</MessageContent>
                   </Message>
                 </MessageGroup>
               </li>)}
             </ol>}
         </section>
 
-        <section className="grid justify-items-center gap-4 border-t py-6" aria-label="Voice turn controls">
+        <section className="grid min-w-0 justify-items-center gap-4 border-t py-6 lg:col-start-2 lg:row-start-2" aria-label="Voice turn controls">
           {turnController.pending
             ? <p className="max-w-md text-center text-sm leading-6 text-muted-foreground">Your response is being prepared. You can check again shortly; no new recording is needed.</p>
             : <p className="max-w-md text-center text-sm leading-6 text-muted-foreground">{active
@@ -334,6 +339,7 @@ export function LivePracticeView() {
             {playbackError && <p className="text-center text-sm text-muted-foreground" role="status">{playbackError}</p>}
           </>}
         </section>
+        <div className="min-w-0 lg:col-start-2 lg:row-start-3">
         {error && <p className="mb-4 text-sm text-destructive" role="alert">{error}</p>}
         <div className="flex flex-wrap gap-3">
           <Button type="button" variant="outline" disabled={refreshing || turnController.pending !== null} onClick={() => void loadSession()}>
@@ -342,6 +348,8 @@ export function LivePracticeView() {
           <Button type="button" disabled={!active || turnController.pending !== null || submitting || finishing || recorderBusy} onClick={() => void finishPractice()}>
             {finishing ? 'Finishing…' : 'Finish practice'}
           </Button>
+        </div>
+        </div>
         </div>
       </>}
     </main>

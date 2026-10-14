@@ -1,6 +1,6 @@
 import { Injectable, type OnApplicationShutdown, type Provider } from '@nestjs/common';
 import { join, resolve } from 'node:path';
-import { FastConformerHost } from './fastconformer-host';
+import { FastConformerHost, SttDiagnosticError } from './fastconformer-host';
 
 export const PRACTICE_RUNTIME = Symbol('PRACTICE_RUNTIME');
 export const PRACTICE_FFMPEG_PATH = Symbol('PRACTICE_FFMPEG_PATH');
@@ -55,20 +55,23 @@ export function loadPracticeRuntimeConfiguration(
 @Injectable()
 export class PracticeRuntimeHost implements OnApplicationShutdown {
   private host?: FastConformerHost;
+  private stopped = false;
 
   constructor(private readonly configuration: PracticeRuntimeConfiguration) {}
 
   getHost(): FastConformerHost {
+    if (this.stopped) throw new SttDiagnosticError('host_stopped');
     return this.host ??= new FastConformerHost({
       pythonExecutable: this.configuration.pythonExecutable,
       workerPath: this.configuration.workerPath,
       modelPath: this.configuration.modelPath,
       expectedSha256: this.configuration.expectedSha256,
-      startupTimeoutMs: 30_000,
+      startupTimeoutMs: 60_000,
     });
   }
 
   async onApplicationShutdown(): Promise<void> {
+    this.stopped = true;
     if (this.host) await this.host.shutdown();
   }
 }

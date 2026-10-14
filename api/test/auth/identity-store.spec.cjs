@@ -3,88 +3,43 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { IdentityStore, IdentityStoreError } = require('../../dist/auth/identity-store.js');
-
 const ID = '123e4567-e89b-42d3-a456-426614174000';
-const identity = { issuer: 'google', subject: 'provider-user-1' };
-
-function fakeQuery(result, error) {
+const identity = { issuer: 'local', subject: ID };
+function fixture(rows = [], error) {
   const calls = [];
-  return {
-    calls,
-    store: new IdentityStore({
-      async query(sql, parameters) {
-        calls.push({ sql, parameters });
-        if (error) throw error;
-        return result;
-      },
-    }),
-  };
+  return { calls, store: new IdentityStore({ async query(sql, parameters) {
+    calls.push({ sql, parameters }); if (error) throw error; return { rows };
+  } }) };
 }
-
-test('getOrCreateOwner uses atomic conflict-safe SQL and binds identity parameters', async () => {
-  const fake = fakeQuery({ rows: [{ id: ID }] });
-  assert.equal(await fake.store.getOrCreateOwner(identity), ID);
-  assert.match(fake.calls[0].sql, /INSERT INTO lingualoop_accounts/i);
-  assert.match(fake.calls[0].sql, /ON CONFLICT \(issuer, subject\) DO UPDATE/i);
-  assert.match(fake.calls[0].sql, /RETURNING id/i);
-  assert.deepEqual(fake.calls[0].parameters, ['google', 'provider-user-1']);
-  assert.ok(!fake.calls[0].sql.includes('provider-user-1'));
+test('retired provider admission never creates or links any account', async () => {
+  const f = fixture([{ id: ID }]);
+  for (const issuer of ['google', 'local', 'nousai']) await assert.rejects(f.store.getOrCreateOwner({ issuer, subject: ID }), IdentityStoreError);
+  assert.deepEqual(f.calls, []);
 });
-
-test('findOwnerByIdentity is scoped by both identity fields and returns null when absent', async () => {
-  const fake = fakeQuery({ rows: [] });
-  assert.equal(await fake.store.findOwnerByIdentity(identity), null);
-  assert.match(fake.calls[0].sql, /WHERE issuer = \$1 AND subject = \$2/i);
-  assert.deepEqual(fake.calls[0].parameters, ['google', 'provider-user-1']);
-  assert.doesNotMatch(fake.calls[0].sql, /SELECT\s+id\s+FROM\s+lingualoop_accounts\s*$/i);
+test('findOwnerByIdentity binds local UUID identity and returns null only for absence', async () => {
+  const f = fixture([{ id: ID }]);
+  assert.equal(await f.store.findOwnerByIdentity(identity), ID);
+  assert.deepEqual(f.calls[0].parameters, ['local', ID]);
+  assert.match(f.calls[0].sql, /WHERE issuer = \$1 AND subject = \$2 AND id::text = \$2/);
+  assert.equal(await fixture().store.findOwnerByIdentity(identity), null);
 });
-
-test('invalid issuer and subject forms reject before querying', async () => {
-  const fake = fakeQuery({ rows: [{ id: ID }] });
-  const invalid = [
-    { issuer: 'nousai', subject: 'legacy-user-id' },
-    { issuer: 'microsoft', subject: 'provider-user' },
-    { issuer: 'provider name', subject: 'ok' },
-    { issuer: 'x'.repeat(65), subject: 'ok' },
-    { issuer: 'google', subject: '' },
-    { issuer: 'google', subject: 'has space' },
-    { issuer: 'google', subject: 'has\ncontrol' },
-    { issuer: 'google', subject: '\ud800' },
-    { issuer: 'google', subject: 'e\u0301' },
-    { issuer: 'google', subject: 'é'.repeat(257) },
-    null,
-  ];
-  for (const value of invalid) await assert.rejects(fake.store.getOrCreateOwner(value), IdentityStoreError);
-  assert.equal(fake.calls.length, 0);
-});
-
-test('migration fails loudly on table collisions and constrains the verified Google identity', () => {
-  const migration = fs.readFileSync(path.join(__dirname, '../../db/migrations/001_owner_identity.sql'), 'utf8');
-  assert.match(migration, /CREATE TABLE lingualoop_accounts/i);
-  assert.doesNotMatch(migration, /CREATE TABLE IF NOT EXISTS/i);
-  assert.match(migration, /CHECK \(issuer = 'google'\)/i);
-  assert.match(migration, /CHECK \(octet_length\(subject\) BETWEEN 1 AND 512\)/i);
-});
-
-test('database failure is replaced with a generic error without leaking SQL or subject', async () => {
-  const secretSubject = 'private-subject-value';
-  const fake = fakeQuery(null, new Error(`SQL failed for ${secretSubject}`));
-  await assert.rejects(fake.store.getOrCreateOwner({ issuer: 'google', subject: secretSubject }), (error) => {
-    assert.equal(error.name, 'IdentityStoreError');
-    assert.equal(error.message, 'Identity store operation failed.');
-    assert.equal(error.message.includes(secretSubject), false);
-    assert.equal(error.message.includes('SQL'), false);
-    return true;
-  });
-});
-
-test('malformed or ambiguous returned rows fail generically', async () => {
-  for (const rows of [[], [{ id: 'not-a-uuid' }], [{ id: ID }, { id: ID }], [null], [{}]]) {
-    const fake = fakeQuery({ rows });
-    await assert.rejects(fake.store.getOrCreateOwner(identity), IdentityStoreError);
+test('invalid external issuer or unstable subject rejects before querying', async () => {
+  const f = fixture();
+  for (const value of [null, {}, { issuer: 'google', subject: ID }, { issuer: 'nousai', subject: ID },
+    ...['', 'has space', 'has\ncontrol', '\ud800', 'e\u0301', 'é'.repeat(257)].map(subject => ({ issuer: 'local', subject }))]) {
+    await assert.rejects(f.store.findOwnerByIdentity(value), IdentityStoreError);
   }
-  const noMatch = fakeQuery({ rows: [] });
-  assert.equal(await noMatch.store.findOwnerByIdentity(identity), null);
-  const badLookup = fakeQuery({ rows: [{ id: 'legacy-id' }] });
-  await assert.rejects(badLookup.store.findOwnerByIdentity(identity), IdentityStoreError);
+  assert.deepEqual(f.calls, []);
+});
+test('historical migration remains immutable and 011 replaces only its issuer constraint', () => {
+  const read = name => fs.readFileSync(path.join(__dirname, '../../db/migrations', name), 'utf8');
+  assert.match(read('001_owner_identity.sql'), /CHECK \(issuer = 'google'\)/);
+  assert.doesNotMatch(read('001_owner_identity.sql'), /CREATE TABLE IF NOT EXISTS/);
+  assert.match(read('011_roles_practices.sql'), /DROP CONSTRAINT lingualoop_accounts_google_issuer/);
+});
+test('malformed or ambiguous rows and database details fail generically', async () => {
+  for (const rows of [[{ id: 'bad' }], [{ id: ID }, { id: ID }], [null], [{}], [{ id: '223e4567-e89b-42d3-a456-426614174000' }]]) {
+    await assert.rejects(fixture(rows).store.findOwnerByIdentity(identity), IdentityStoreError);
+  }
+  await assert.rejects(fixture([], Error('PRIVATE SQL')).store.findOwnerByIdentity(identity), error => error.message === 'Identity store operation failed.');
 });

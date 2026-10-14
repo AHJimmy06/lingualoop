@@ -14,6 +14,8 @@ function payload(overrides = {}) {
     aud: AUDIENCE,
     sub: 'google-stable-subject-123',
     exp: FUTURE_EXPIRY,
+    email: 'person@example.test',
+    email_verified: true,
     ...overrides,
   };
 }
@@ -29,19 +31,20 @@ async function rejectsAsInvalid(promise) {
   await assert.rejects(promise, InvalidGoogleIdTokenError);
 }
 
-test('verifies with the expected audience and returns only Google issuer and stable subject', async () => {
+test('verifies with the expected audience and returns verified normalized email', async () => {
   let observed;
   const identity = await service(payload({ email: 'person@example.test', email_verified: true }),
     (token, audience) => { observed = { token, audience }; }).verify('offline-test-ticket');
 
   assert.deepEqual(observed, { token: 'offline-test-ticket', audience: AUDIENCE });
-  assert.deepEqual(identity, { issuer: 'google', subject: 'google-stable-subject-123' });
+  assert.deepEqual(identity, { issuer: 'google', subject: 'google-stable-subject-123', email: 'person@example.test' });
 });
 
 test('accepts the legacy Google issuer spelling', async () => {
   assert.deepEqual(await service(payload({ iss: 'accounts.google.com' })).verify('ticket'), {
     issuer: 'google',
     subject: 'google-stable-subject-123',
+    email: 'person@example.test',
   });
 });
 
@@ -50,8 +53,14 @@ test('rejects untrusted issuers and a wrong audience', async () => {
   await rejectsAsInvalid(service(payload({ aud: 'another-client' })).verify('ticket'));
 });
 
-test('rejects an unverified email when an email claim is present', async () => {
-  await rejectsAsInvalid(service(payload({ email: 'person@example.test', email_verified: false })).verify('ticket'));
+test('requires email and strict boolean verified claim after ticket verification', async () => {
+  for (const email_verified of [undefined, false, 'true', 1, null]) {
+    await rejectsAsInvalid(service(payload({ email_verified })).verify('ticket'));
+  }
+  for (const email of [undefined, null, '', 'missing-at', 'é@example.test', 'a'.repeat(255) + '@example.test']) {
+    await rejectsAsInvalid(service(payload({ email })).verify('ticket'));
+  }
+  assert.equal((await service(payload({ email: ' First.Last+Class@GMAIL.COM ' })).verify('ticket')).email, 'first.last+class@gmail.com');
 });
 
 test('rejects a missing or malformed stable subject', async () => {

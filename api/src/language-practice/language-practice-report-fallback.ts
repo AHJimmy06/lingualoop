@@ -53,15 +53,13 @@ export function buildLanguagePracticeReportFallback(
   return {
     summary: summary.slice(0, MAX_SUMMARY_LENGTH),
     corrections,
-    strengths: [
-      `Sostuvo ${turns.length} ${turns.length === 1 ? 'intercambio completo' : 'intercambios completos'} en inglés durante la práctica.`,
-    ],
+    strengths: [],
     recommendations: corrections.length
       ? [
           'Practique nuevamente las frases corregidas y úselas en ejemplos propios antes de la próxima sesión.',
         ]
       : [
-          'Realice otra sesión sobre el mismo tema para ampliar la evidencia y consolidar la fluidez conversacional.',
+          'Realice otra sesión sobre el mismo tema y desarrolle sus ideas con ejemplos para ampliar la evidencia.',
         ],
   };
 }

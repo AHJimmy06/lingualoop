@@ -76,8 +76,7 @@ export function createLanguagePracticeTurnProviders(
         turnStore,
         sessions: {
           async getOwnedSession(ownerId, sessionId) {
-            const session = await sessionStore.getSession(ownerId, sessionId);
-            return session?.status === 'ACTIVE' ? { level: session.level, topic: session.topic } : null;
+            return sessionStore.getOwnedSnapshot(ownerId, sessionId);
           },
         },
         history: {

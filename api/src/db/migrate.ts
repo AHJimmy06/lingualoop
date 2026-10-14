@@ -14,6 +14,8 @@ const REQUIRED_MIGRATIONS = [
   '005_language_practice_sessions.sql', '006_language_practice_turns.sql',
   '007_language_practice_turn_lease.sql', '008_language_practice_reports.sql',
   '009_language_practice_ai_reports.sql', '010_language_practice_report_claims.sql',
+  '011_roles_practices.sql', '012_custom_practice_theme_image.sql',
+  '013_practice_difficulty.sql',
 ];
 
 export interface MigrationClient {
@@ -23,7 +25,7 @@ export interface MigrationClient {
 
 interface MigrationFile { name: string; sql: string; checksum: string; }
 
-async function loadMigrations(directory: string): Promise<MigrationFile[]> {
+export async function loadMigrations(directory: string): Promise<MigrationFile[]> {
   const entries = await fs.readdir(directory, { withFileTypes: true });
   const names = entries.filter((entry) => entry.name.endsWith('.sql')).map((entry) => entry.name);
   const numbered = names.map((name) => {

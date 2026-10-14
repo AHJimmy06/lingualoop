@@ -36,9 +36,12 @@ test('a fresh server snapshot replaces the previous countdown anchor', () => {
 test('registers React session and completion routes behind the session gate', () => {
   assert.match(routesSource, /path="\/language-practice\/sessions\/:sessionId"[\s\S]*?<RouteGate><LivePracticeView \/><\/RouteGate>/);
   assert.match(routesSource, /path="\/language-practice\/sessions\/:sessionId\/complete"[\s\S]*?<RouteGate><PracticeReportView \/><\/RouteGate>/);
-  assert.match(setupSource, /client\.createSession\(setup\)/);
+  assert.match(setupSource, /client\.createSession\(\{ \.\.\.preferences, topic: topic as PracticeSetup\['topic'\] \}\)/);
   assert.match(setupSource, /navigate\(`\/language-practice\/sessions\/\$\{created\.id\}`\)/);
-  assert.match(setupSource, /if \(creating \|\| !options \|\| !canStart \|\| duration === null\) return/);
+  assert.match(setupSource, /const canStart = isPracticeSetupValid\(options, preferences\.level, topic, preferences\.durationMinutes\)/);
+  assert.match(setupSource, /if \(!canStart\) return;\s*const release = claimStart\(\);\s*if \(!release\) return;/);
+  assert.match(setupSource, /if \(pending\.current \|\| loggingOut \|\| !mounted\.current\) return null;\s*pending\.current = true;/);
+  assert.match(setupSource, /finally \{\s*release\(\);\s*if \(mounted\.current\) setCreating\(false\);/);
 });
 
 test('React entry remains active without legacy Vue bootstrap, router, or views', () => {

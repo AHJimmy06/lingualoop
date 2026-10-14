@@ -1,3 +1,4 @@
+import { normalizeEmail } from './account-role';
 import { GoogleIdentityService } from './google-identity.service';
 import { IdentityStore, type VerifiedIdentity } from './identity-store';
 import { LinguaLoopTokenService } from './lingualoop-token.service';
@@ -109,7 +110,8 @@ export class GoogleLoginSession {
         Buffer.byteLength(identity.subject, 'utf8') > MAX_SUBJECT_BYTES ||
         Buffer.from(identity.subject, 'utf8').toString('utf8') !== identity.subject ||
         identity.subject.normalize('NFC') !== identity.subject ||
-        /[\p{White_Space}\p{Cc}\p{Cf}]/u.test(identity.subject)) {
+        /[\p{White_Space}\p{Cc}\p{Cf}]/u.test(identity.subject) ||
+        normalizeEmail(identity.email) !== identity.email) {
       throw new Error(LOGIN_ERROR_MESSAGE);
     }
   }

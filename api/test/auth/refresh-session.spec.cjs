@@ -21,7 +21,7 @@ function fixture(overrides = {}) {
     refreshStore: {
       async rotate(...args) {
         calls.rotate.push(args);
-        return { status: 'rotated', ownerId: OWNER, issuer: 'google', subject: 'verified-subject', expiresAtMs: EXPIRY };
+        return { status: 'rotated', ownerId: OWNER, issuer: 'local', subject: OWNER, expiresAtMs: EXPIRY };
       },
     },
     sessionStore: {
@@ -62,7 +62,7 @@ test('valid rotation returns access/new refresh credentials and the unchanged DB
   await result.compensateDeliveryFailure();
   assert.deepEqual(calls.revoke, [[OWNER, SESSION, NOW]]);
   assert.deepEqual(calls.rotate, [[SESSION, HASH, NEXT_HASH, NOW]]);
-  assert.deepEqual(calls.issue, [{ issuer: 'google', subject: 'verified-subject', sessionId: SESSION }]);
+  assert.deepEqual(calls.issue, [{ issuer: 'local', subject: OWNER, sessionId: SESSION }]);
   assert.equal(JSON.stringify(calls.rotate).includes(CREDENTIAL), false);
 });
 
@@ -133,7 +133,7 @@ test('concurrent reuse follows atomic store result: one rotation succeeds and re
           return { status: 'replay' };
         }
         used = true;
-        return { status: 'rotated', ownerId: OWNER, issuer: 'google', subject: 'verified-subject', expiresAtMs: EXPIRY };
+        return { status: 'rotated', ownerId: OWNER, issuer: 'local', subject: OWNER, expiresAtMs: EXPIRY };
       },
     },
   });

@@ -4,6 +4,8 @@ import { chmod, lstat, mkdtemp, open, rm, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
+import { getSttDiagnostic, SttDiagnosticError } from './fastconformer-host'
+import type { SttDiagnosticCode } from './fastconformer-host'
 
 const MAX_INPUT_BYTES = 2 * 1024 * 1024
 const PROCESS_TIMEOUT_MS = 30_000
@@ -48,17 +50,17 @@ function runFFmpeg(command: string, inputPath: string, outputPath: string, spawn
         windowsHide: true,
       })
     } catch {
-      reject(new Error('Audio preparation failed'))
+      reject(new SttDiagnosticError('preparation_spawn'))
       return
     }
 
     let settled = false
-    let failure = false
+    let failure: SttDiagnosticCode | undefined
     let stderrTail = Buffer.alloc(0)
     let killTimer: NodeJS.Timeout | undefined
     let closeTimer: NodeJS.Timeout | undefined
     const timeout = setTimeout(() => {
-      failure = true
+      failure ??= 'preparation_timeout'
       signalTree(child, 'SIGTERM')
       killTimer = setTimeout(() => {
         signalTree(child, 'SIGKILL')
@@ -76,12 +78,12 @@ function runFFmpeg(command: string, inputPath: string, outputPath: string, spawn
       clearTimers()
       stderrTail = Buffer.alloc(0)
       if (ok && !failure) resolve()
-      else reject(new Error('Audio preparation failed'))
+      else reject(new SttDiagnosticError(failure ?? 'preparation_process'))
     }
 
     const stopChild = () => {
       if (settled) return
-      failure = true
+      failure ??= 'preparation_process'
       signalTree(child, 'SIGTERM')
       if (!killTimer) killTimer = setTimeout(() => {
         signalTree(child, 'SIGKILL')
@@ -95,7 +97,7 @@ function runFFmpeg(command: string, inputPath: string, outputPath: string, spawn
     child.stderr?.once('error', stopChild)
     child.once('error', stopChild)
     child.once('exit', (code: number | null) => {
-      if (code !== 0) failure = true
+      if (code !== 0) failure ??= 'preparation_process'
     })
     child.once('close', (code: number | null) => finish(code === 0))
   })
@@ -159,10 +161,11 @@ export async function withPreparedAudio<T>(
       (options.spawnChild !== undefined && typeof options.spawnChild !== 'function') ||
       (options.timeoutMs !== undefined &&
         (!Number.isInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > PROCESS_TIMEOUT_MS))) {
-    throw new Error('Audio preparation failed')
+    throw new SttDiagnosticError('preparation_input')
   }
 
   let directory: string | undefined
+  let failureCode: SttDiagnosticCode = 'preparation_io'
   try {
     directory = await mkdtemp(join(options.tempRoot ?? tmpdir(), 'lingualoop-audio-'))
     await chmod(directory, 0o700)
@@ -171,13 +174,16 @@ export async function withPreparedAudio<T>(
     await writeFile(inputPath, input, { flag: 'wx', mode: 0o600 })
     await runFFmpeg(options.ffmpegExecutable, inputPath, outputPath, options.spawnChild ?? spawn,
       options.timeoutMs ?? PROCESS_TIMEOUT_MS)
+    failureCode = 'preparation_wav'
     await validateWav(outputPath)
+    failureCode = 'preparation_callback'
     return await callback(outputPath)
-  } catch {
-    throw new Error('Audio preparation failed')
+  } catch (error) {
+    if (getSttDiagnostic(error)) throw error
+    throw new SttDiagnosticError(failureCode)
   } finally {
     if (directory) {
-      try { await rm(directory, { recursive: true, force: true }) } catch { throw new Error('Audio preparation failed') }
+      try { await rm(directory, { recursive: true, force: true }) } catch { throw new SttDiagnosticError('preparation_cleanup') }
     }
   }
 }

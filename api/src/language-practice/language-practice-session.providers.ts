@@ -1,4 +1,5 @@
 import type { Provider } from '@nestjs/common';
+import { PRACTICE_CATALOGUE_STORE, PracticeCatalogueStore } from './practice-catalogue';
 import { LINGUALOOP_QUERY_EXECUTOR } from '../db/postgres';
 import { LanguagePracticeReportStore } from './language-practice-report-store';
 import { createLanguagePracticeReportAiAdapter } from './language-practice-report.providers';
@@ -12,6 +13,11 @@ export const LANGUAGE_PRACTICE_REPORT_STORE = Symbol('LANGUAGE_PRACTICE_REPORT_S
 export const LANGUAGE_PRACTICE_REPORT_SERVICE = Symbol('LANGUAGE_PRACTICE_REPORT_SERVICE');
 
 export const LANGUAGE_PRACTICE_SESSION_PROVIDERS: Provider[] = [
+  {
+    provide: PRACTICE_CATALOGUE_STORE,
+    inject: [LINGUALOOP_QUERY_EXECUTOR],
+    useFactory: (executor: ConstructorParameters<typeof PracticeCatalogueStore>[0]) => new PracticeCatalogueStore(executor),
+  },
   {
     provide: LANGUAGE_PRACTICE_SESSION_STORE,
     inject: [LINGUALOOP_QUERY_EXECUTOR],

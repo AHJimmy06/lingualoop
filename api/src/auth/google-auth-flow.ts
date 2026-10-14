@@ -69,7 +69,7 @@ export class GoogleAuthFlow {
       authorization.searchParams.set('response_type', 'code');
       authorization.searchParams.set('client_id', this.clientId);
       authorization.searchParams.set('redirect_uri', this.dependencies.callbackUrl);
-      authorization.searchParams.set('scope', 'openid');
+      authorization.searchParams.set('scope', 'openid email');
       authorization.searchParams.set('state', state);
       return { authorizationUrl: authorization.toString(), stateCookie: this.policy.stateCookie(state) };
     } catch {

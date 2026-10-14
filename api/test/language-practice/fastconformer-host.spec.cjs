@@ -6,7 +6,7 @@ const { FastConformerHost, FASTCONFORMER_MODEL_ID } = require('../../dist/langua
 
 const sha = 'a'.repeat(64);
 const config = (overrides = {}) => ({ pythonExecutable: 'python3', workerPath: '/private/worker.py', modelPath: '/private/model.nemo', expectedSha256: sha, startupTimeoutMs: 100, ...overrides });
-function harness(overrides = {}) {
+function harness(overrides = {}, closeOnTerm = true) {
   const makeChild = () => {
     const child = new EventEmitter();
     child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough(); child.pid = 12345;
@@ -26,7 +26,7 @@ function harness(overrides = {}) {
   const signals = [];
   const host = new FastConformerHost(config(overrides), spawn, (child, signal) => {
     signals.push(signal);
-    if (signal === 'SIGTERM') child.emit('close', null);
+    if (closeOnTerm && signal === 'SIGTERM') child.emit('close', null);
   });
   return { host, get child() { return children[0]; }, children, calls, signals };
 }
@@ -119,7 +119,8 @@ test('caps unterminated startup output and validates bounded config', async () =
   child.stdout.write('x'.repeat(8193));
   await rejected;
   await host.shutdown();
-  for (const override of [{ expectedSha256: 'A'.repeat(64) }, { startupTimeoutMs: 30001 }]) {
+  assert.doesNotThrow(() => new FastConformerHost(config({ startupTimeoutMs: 60000 })));
+  for (const override of [{ expectedSha256: 'A'.repeat(64) }, ...[60001, 0, -1, 1.5, NaN, Infinity].map((startupTimeoutMs) => ({ startupTimeoutMs }))]) {
     assert.throws(() => new FastConformerHost(config(override)), /Invalid FastConformer host configuration/);
   }
 });
@@ -231,7 +232,7 @@ test('consumes the only recovery attempt even when replacement startup fails', a
   children[0].emit('close', 1);
   const replacement = host.transcribe('/audio/new.wav');
   children[1].emit('close', 1);
-  await assert.rejects(replacement, /cancelled/);
+  await assert.rejects(replacement, /closed during startup/);
   await assert.rejects(host.transcribe('/audio/third.wav'), /stopped or closed/);
   assert.equal(calls.length, 2);
   await host.shutdown();
@@ -269,6 +270,180 @@ test('ignores stale previous-child events after replacement becomes current', as
   children[1].stdout.write(JSON.stringify({ type: 'result', id: request.id, transcript: 'still alive' }) + '\n');
   assert.equal(await replacement, 'still alive');
   assert.equal(calls.length, 2);
+  await host.shutdown();
+});
+
+test('transcribe preserves finite startup diagnostics instead of cancellation', async (t) => {
+  const cases = [
+    ['startup_malformed', (child) => child.stdout.write('SECRET not json\n')],
+    ['startup_identity', (child) => child.stdout.write(ready({ modelId: 'SECRET' }))],
+    ['startup_output_limit', (child) => child.stdout.write('x'.repeat(8193))],
+    ['startup_unsolicited', (child) => child.stdout.write(ready() + 'SECRET\n')],
+    ['startup_process_error', (child) => child.emit('error', new Error('SECRET /private'))],
+    ['startup_stream_error', (child) => child.stderr.emit('error', new Error('SECRET'))],
+    ['startup_closed', (child) => child.emit('close', 2)],
+    ['startup_timeout', () => {}],
+  ];
+  for (const [code, trigger] of cases) await t.test(code, async () => {
+    const { host, child, children, calls } = harness({ startupTimeoutMs: 10 });
+    const rejected = assert.rejects(host.transcribe('/private/SECRET.wav'), (error) => {
+      const { getSttDiagnostic } = require('../../dist/language-practice/fastconformer-host.js');
+      assert.deepEqual(getSttDiagnostic(error), { code, component: 'fastconformer', phase: 'startup' });
+      assert.doesNotMatch(error.message, /SECRET|private/);
+      return true;
+    });
+    trigger(child);
+    await rejected;
+    assert.equal(calls.length, 1);
+    const next = host.transcribe('/audio/explicit-next.wav');
+    assert.equal(calls.length, 2);
+    await finishRequest(children[1], next, '/audio/explicit-next.wav');
+    await host.shutdown();
+  });
+});
+
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+async function finishRequest(child, pending, audioPath) {
+  child.stdout.write(ready());
+  await flush();
+  const request = JSON.parse(child.stdin.read().toString());
+  assert.equal(request.audioPath, audioPath);
+  child.stdout.write(JSON.stringify({ type: 'result', id: request.id, transcript: 'recovered' }) + '\n');
+  assert.equal(await pending, 'recovered');
+}
+
+test('60-second startup allows readiness after the old ceiling', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { host, child, calls } = harness({ startupTimeoutMs: 60000 });
+  const pending = host.transcribe('/audio/late.wav');
+  t.mock.timers.tick(30001);
+  await finishRequest(child, pending, '/audio/late.wav');
+  assert.equal(calls.length, 1);
+  await host.shutdown();
+});
+
+test('startup timeout rejects once at 60000 and recovers only on a later valid request', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { host, child, children, calls } = harness({ startupTimeoutMs: 60000 });
+  let rejections = 0;
+  const pending = host.transcribe('/audio/failed.wav');
+  pending.catch(() => { rejections++; });
+  const rejected = assert.rejects(pending, (error) => {
+    const { getSttDiagnostic } = require('../../dist/language-practice/fastconformer-host.js');
+    assert.equal(getSttDiagnostic(error).code, 'startup_timeout');
+    return errorIsSafe(error);
+  });
+  t.mock.timers.tick(59999);
+  await flush();
+  assert.equal(rejections, 0);
+  t.mock.timers.tick(1);
+  await rejected;
+  await flush();
+  assert.equal(rejections, 1);
+  assert.equal(calls.length, 1);
+  assert.equal(child.stdin.read(), null);
+  await assert.rejects(host.transcribe('relative.wav'), /absolute audio path/);
+  assert.equal(calls.length, 1);
+  const replacement = host.transcribe('/audio/new.wav');
+  await assert.rejects(host.transcribe('/audio/concurrent.wav'), /already in flight/);
+  assert.equal(calls.length, 2);
+  child.stdout.write(ready());
+  child.stdin.emit('error', new Error('stale input'));
+  child.stderr.emit('error', new Error('stale stderr'));
+  child.emit('error', new Error('stale process'));
+  child.emit('close', 1);
+  await finishRequest(children[1], replacement, '/audio/new.wav');
+  assert.equal(rejections, 1);
+  children[1].emit('close', 1);
+  await assert.rejects(host.transcribe('/audio/budget-spent.wav'), /stopped or closed/);
+  assert.equal(calls.length, 2);
+  await host.shutdown();
+});
+
+test('cleanup grace expiration is not exit confirmation; later close permits one replacement', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { host, child, children, calls, signals } = harness({}, false);
+  const rejected = assert.rejects(host.transcribe('/audio/failed.wav'), /malformed startup/);
+  child.stdout.write('not json\n');
+  await rejected;
+  await assert.rejects(host.transcribe('/audio/before-close.wav'), /stopped or closed/);
+  t.mock.timers.tick(1500);
+  await flush();
+  t.mock.timers.tick(250);
+  await flush();
+  assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
+  await assert.rejects(host.transcribe('/audio/after-grace.wav'), /stopped or closed/);
+  assert.equal(calls.length, 1);
+  child.emit('close', 1);
+  const next = host.transcribe('/audio/confirmed.wav');
+  assert.equal(calls.length, 2);
+  await finishRequest(children[1], next, '/audio/confirmed.wav');
+  const stopping = host.shutdown();
+  children[1].emit('close', 0);
+  await stopping;
+});
+
+test('confirmed close permits recovery while old cleanup is still settling', async () => {
+  const { host, child, children, calls, signals } = harness({}, false);
+  const rejected = assert.rejects(host.transcribe('/audio/failed.wav'), /malformed startup/);
+  child.stdout.write('not json\n');
+  await rejected;
+  child.emit('close', 1);
+  const next = host.transcribe('/audio/next.wav');
+  assert.equal(calls.length, 2);
+  child.emit('close', 1);
+  await finishRequest(children[1], next, '/audio/next.wav');
+  assert.deepEqual(signals, ['SIGTERM']);
+  const stopping = host.shutdown();
+  children[1].emit('close', 0);
+  await stopping;
+});
+
+test('confirmed startup close recovers once, even if replacement startup also fails', async () => {
+  const { host, child, children, calls } = harness();
+  const first = assert.rejects(host.transcribe('/audio/first.wav'), /closed during startup/);
+  child.emit('close', 1);
+  await first;
+  const next = assert.rejects(host.transcribe('/audio/next.wav'), /malformed startup/);
+  assert.equal(calls.length, 2);
+  children[1].stdout.write('not json\n');
+  await next;
+  await assert.rejects(host.transcribe('/audio/third.wav'), /stopped or closed/);
+  assert.equal(calls.length, 2);
+  await host.shutdown();
+});
+
+test('explicit shutdown permanently disables failed-startup recovery and first use', async () => {
+  for (const failedStartup of [false, true]) {
+    const { host, child, calls } = harness();
+    if (failedStartup) {
+      const rejected = assert.rejects(host.transcribe('/audio/first.wav'), /malformed startup/);
+      child.stdout.write('not json\n');
+      await rejected;
+    }
+    await host.shutdown();
+    await assert.rejects(host.start(), /stopped or closed/);
+    await assert.rejects(host.transcribe('/audio/later.wav'), /stopped or closed/);
+    assert.equal(calls.length, failedStartup ? 1 : 0);
+  }
+});
+
+test('request deadline still includes startup and never replays a timed-out request', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { host, child, calls } = harness({ startupTimeoutMs: 60000 });
+  const rejected = assert.rejects(host.transcribe('/audio/deadline.wav'), /transcription timed out/);
+  t.mock.timers.tick(59999);
+  child.stdout.write(ready());
+  await flush();
+  assert.equal(JSON.parse(child.stdin.read().toString()).audioPath, '/audio/deadline.wav');
+  t.mock.timers.tick(30000);
+  await flush();
+  assert.equal(host.pendingRequest !== undefined, true);
+  t.mock.timers.tick(1);
+  await rejected;
+  await assert.rejects(host.transcribe('/audio/after-timeout.wav'), /stopped or closed/);
+  assert.equal(calls.length, 1);
+  assert.equal(child.stdin.read(), null);
   await host.shutdown();
 });
 

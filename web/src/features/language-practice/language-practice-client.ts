@@ -1,7 +1,10 @@
 import type { AuthSession } from '../../auth-session'
-const LANGUAGE_PRACTICE_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] as const
-const LANGUAGE_PRACTICE_DURATIONS = [5, 10, 15] as const
-const LANGUAGE_PRACTICE_TOPICS = ['travel', 'work', 'studies', 'everyday-conversation'] as const
+import { isValidSetup, hasSetupKeys, isPracticeDifficulty, hasResponseDifficulty, parseCoverage, parsePractice, validateCreatePractice, validatePracticeImage, MAX_PRACTICE_IMAGE_BYTES } from './practice-contract'
+export const LANGUAGE_PRACTICE_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] as const
+export const LANGUAGE_PRACTICE_DURATIONS = [5, 10, 15] as const
+export const LANGUAGE_PRACTICE_TOPICS = ['travel', 'work', 'studies', 'everyday-conversation'] as const
+export const LANGUAGE_PRACTICE_DIFFICULTIES = ['easy', 'medium', 'hard'] as const
+export type PracticeDifficulty = (typeof LANGUAGE_PRACTICE_DIFFICULTIES)[number]
 type LanguagePracticeLevel = (typeof LANGUAGE_PRACTICE_LEVELS)[number]
 type LanguagePracticeDuration = (typeof LANGUAGE_PRACTICE_DURATIONS)[number]
 type LanguagePracticeTopic = (typeof LANGUAGE_PRACTICE_TOPICS)[number]
@@ -21,15 +24,18 @@ const ACCEPTED_AUDIO_TYPES = new Set([
 
 type RecordValue = Record<string, unknown>
 export type PracticeSetup = {
+  difficulty?: PracticeDifficulty
   level: LanguagePracticeLevel
   topic: LanguagePracticeTopic
   durationMinutes: LanguagePracticeDuration
 }
+export type ParsedPracticeSetup = Omit<PracticeSetup, 'difficulty'> & { difficulty: PracticeDifficulty | null }
 export type SessionTurn = { sequence: number; transcript: string; assistantResponse: string; completedAt: string }
 export type FinishSessionResponse = { id: string; status: 'COMPLETED' | 'EXPIRED' }
 export type SessionDetail = {
   id: string
   status: SessionStatus
+  difficulty: PracticeDifficulty | null
   level: LanguagePracticeLevel
   topic: LanguagePracticeTopic
   durationMinutes: LanguagePracticeDuration
@@ -57,7 +63,20 @@ type LanguagePracticeReportCorrection = {
   correctedPhrase: string
   explanation: string
 }
+export type ParameterCoverage = {
+  parameterId: string
+  requirement: string
+  status: 'met' | 'partial' | 'not-met' | 'unassessed'
+  evidenceSequences: number[]
+  explanation: string
+}
+export type TeacherPractice = {
+  id: string; teacherId: string; teacherName: string; title: string; setup: ParsedPracticeSetup
+  parameters: { id: string; requirement: string }[]; createdAt: string; hasImage: boolean
+}
+export type CreatePractice = { title: string; setup: Omit<PracticeSetup, 'topic'>; parameters: { requirement: string }[] }
 export type LanguagePracticeReport = {
+  parameterCoverage: ParameterCoverage[]
   sessionId: string
   summary: string
   corrections: LanguagePracticeReportCorrection[]
@@ -69,6 +88,7 @@ export type LanguagePracticeReport = {
 
 export type LanguagePracticeClientErrorKind =
   | 'unauthenticated'
+  | 'forbidden'
   | 'not-found'
   | 'conflict'
   | 'unavailable'
@@ -85,6 +105,7 @@ export class LanguagePracticeClientError extends Error {
 function publicMessage(kind: LanguagePracticeClientErrorKind): string {
   switch (kind) {
     case 'unauthenticated': return 'Sign in to continue.'
+    case 'forbidden': return 'Your account does not have permission for this action.'
     case 'not-found': return 'This practice session could not be found.'
     case 'conflict': return 'This practice action is not available right now.'
     case 'invalid-input': return 'The practice request is invalid.'
@@ -93,32 +114,32 @@ function publicMessage(kind: LanguagePracticeClientErrorKind): string {
   }
 }
 
-function isRecord(value: unknown): value is RecordValue {
+export function isRecord(value: unknown): value is RecordValue {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function hasExactKeys(value: RecordValue, keys: readonly string[]): boolean {
+export function hasExactKeys(value: RecordValue, keys: readonly string[]): boolean {
   return Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key))
 }
 
-function isUuid(value: unknown): value is string {
+export function isUuid(value: unknown): value is string {
   return typeof value === 'string' && UUID_PATTERN.test(value)
 }
 
-function isTimestamp(value: unknown): value is string {
+export function isTimestamp(value: unknown): value is string {
   return typeof value === 'string' && value.length <= 35 &&
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value) &&
     !Number.isNaN(Date.parse(value))
 }
 
-function boundedText(value: unknown, maximum: number, allowEmpty = false): value is string {
+export function boundedText(value: unknown, maximum: number, allowEmpty = false): value is string {
   return typeof value === 'string' && value.length <= maximum && (allowEmpty || Boolean(value.trim()))
 }
 
 function parseSession(value: unknown): SessionDetail {
-  if (!isRecord(value) || !hasExactKeys(value, [
+  if (!isRecord(value) || !hasSetupKeys(value, [
     'id', 'status', 'level', 'topic', 'durationMinutes', 'startedAt', 'expiresAt', 'remainingMs', 'turnInProgress', 'turns',
-  ]) || !isUuid(value.id) ||
+  ]) || !hasResponseDifficulty(value) || !isUuid(value.id) ||
       !LANGUAGE_PRACTICE_LEVELS.includes(value.level as LanguagePracticeLevel) ||
       !LANGUAGE_PRACTICE_TOPICS.includes(value.topic as LanguagePracticeTopic) ||
       !LANGUAGE_PRACTICE_DURATIONS.includes(value.durationMinutes as LanguagePracticeDuration) ||
@@ -145,6 +166,7 @@ function parseSession(value: unknown): SessionDetail {
   return {
     id: value.id,
     status: value.status as SessionStatus,
+    difficulty: isPracticeDifficulty(value.difficulty) ? value.difficulty : null,
     level: value.level as LanguagePracticeLevel,
     topic: value.topic as LanguagePracticeTopic,
     durationMinutes: value.durationMinutes as LanguagePracticeDuration,
@@ -206,9 +228,9 @@ function parseFinish(value: unknown, expectedSessionId: string): FinishSessionRe
   return { id: value.id, status: value.status }
 }
 
-function parseReport(value: unknown, expectedSessionId: string): LanguagePracticeReport {
+export function parseReport(value: unknown, expectedSessionId: string): LanguagePracticeReport {
   if (!isRecord(value) || !hasExactKeys(value, [
-    'sessionId', 'summary', 'corrections', 'strengths', 'recommendations', 'generatedWithAi', 'createdAt',
+    'sessionId', 'summary', 'corrections', 'strengths', 'recommendations', 'generatedWithAi', 'createdAt', 'parameterCoverage',
   ]) || value.sessionId !== expectedSessionId || typeof value.generatedWithAi !== 'boolean' || !isTimestamp(value.createdAt) ||
       !boundedText(value.summary, 400) || !Array.isArray(value.corrections) || value.corrections.length > 20 ||
       !Array.isArray(value.strengths) || value.strengths.length > 3 ||
@@ -235,6 +257,7 @@ function parseReport(value: unknown, expectedSessionId: string): LanguagePractic
   })
   return {
     sessionId: expectedSessionId,
+    parameterCoverage: parseCoverage(value.parameterCoverage),
     summary: value.summary,
     corrections,
     strengths: parseTextList(value.strengths),
@@ -244,7 +267,9 @@ function parseReport(value: unknown, expectedSessionId: string): LanguagePractic
   }
 }
 
-function responseError(status: number): LanguagePracticeClientError {
+export function responseError(status: number): LanguagePracticeClientError {
+  if (status === 403) return new LanguagePracticeClientError('forbidden', status)
+  if (status === 400) return new LanguagePracticeClientError('invalid-input', status)
   if (status === 401) return new LanguagePracticeClientError('unauthenticated', status)
   if (status === 404) return new LanguagePracticeClientError('not-found', status)
   if (status === 409) return new LanguagePracticeClientError('conflict', status)
@@ -254,6 +279,69 @@ function responseError(status: number): LanguagePracticeClientError {
 
 export class LanguagePracticeClient {
   constructor(private readonly session: AuthSession) {}
+
+  async listPractices(): Promise<TeacherPractice[]> {
+    const value = await this.getJson('/api/language-practice/practices')
+    if (!isRecord(value) || !hasExactKeys(value, ['practices']) || !Array.isArray(value.practices)) throw new LanguagePracticeClientError('invalid-response')
+    const practices = value.practices.map(parsePractice)
+    if (new Set(practices.map(item => item.id)).size !== practices.length) throw new LanguagePracticeClientError('invalid-response')
+    return practices
+  }
+
+  async getPractice(id: string): Promise<TeacherPractice> {
+    this.validateUuid(id)
+    const practice = parsePractice(await this.getJson(`/api/language-practice/practices/${id}`))
+    if (practice.id !== id) throw new LanguagePracticeClientError('invalid-response')
+    return practice
+  }
+
+  async createPractice(input: CreatePractice, image?: Blob): Promise<TeacherPractice> {
+    validateCreatePractice(input)
+    if (image === undefined) return parsePractice(await this.readJson(await this.post('/api/language-practice/practices', input)))
+    validatePracticeImage(image)
+    const body = new FormData()
+    body.append('metadata', JSON.stringify(input))
+    body.append('image', image, 'cover')
+    return parsePractice(await this.readJson(await this.post('/api/language-practice/practices', body)))
+  }
+
+  async getPracticeImage(id: string): Promise<Blob> {
+    this.validateUuid(id)
+    const response = await this.session.getWithRefresh(`/api/language-practice/practices/${id}/image`)
+    if (!response) throw new LanguagePracticeClientError(this.session.authenticated ? 'unavailable' : 'unauthenticated')
+    if (response.status !== 200) throw responseError(response.status)
+    if (response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase() !== 'image/jpeg' ||
+        Number(response.headers.get('content-length')) > MAX_PRACTICE_IMAGE_BYTES || !response.body) throw new LanguagePracticeClientError('invalid-response')
+    const reader = response.body.getReader()
+    const chunks: ArrayBuffer[] = []
+    let size = 0
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        size += value.byteLength
+        if (size > MAX_PRACTICE_IMAGE_BYTES) { await reader.cancel(); throw new LanguagePracticeClientError('invalid-response') }
+        chunks.push(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer)
+      }
+    } catch (error) {
+      if (error instanceof LanguagePracticeClientError) throw error
+      throw new LanguagePracticeClientError('unavailable')
+    } finally { reader.releaseLock() }
+    if (size === 0) throw new LanguagePracticeClientError('invalid-response')
+    return new Blob(chunks, { type: 'image/jpeg' })
+  }
+
+  async createCustomSession(input: { practiceId: string }): Promise<SessionDetail> {
+    if (!isRecord(input) || !hasExactKeys(input, ['practiceId']) || !isUuid(input.practiceId)) throw new LanguagePracticeClientError('invalid-input')
+    return parseSession(await this.readJson(await this.post('/api/language-practice/sessions', input)))
+  }
+
+  private async getJson(path: string): Promise<unknown> {
+    const response = await this.session.getWithRefresh(path)
+    if (!response) throw new LanguagePracticeClientError('unavailable')
+    if (!response.ok) throw responseError(response.status)
+    return this.readJson(response)
+  }
 
   async createSession(setup: PracticeSetup): Promise<SessionDetail> {
     this.validateSetup(setup)
@@ -317,10 +405,7 @@ export class LanguagePracticeClient {
   }
 
   private validateSetup(setup: PracticeSetup): void {
-    if (!setup || typeof setup !== 'object' ||
-        !LANGUAGE_PRACTICE_LEVELS.includes(setup.level) ||
-        !LANGUAGE_PRACTICE_TOPICS.includes(setup.topic) ||
-        !LANGUAGE_PRACTICE_DURATIONS.includes(setup.durationMinutes)) {
+    if (!isValidSetup(setup)) {
       throw new LanguagePracticeClientError('invalid-input')
     }
   }

@@ -62,9 +62,10 @@ async function createServer(t, turnStore = { async listCompletedTurns(owner, id)
         if (value !== token) throw new InvalidBearerTokenError();
         return { issuer: 'google', subject: 'verified-subject', sessionId };
       } } },
-      { provide: LINGUALOOP_IDENTITY_STORE, useValue: { async findOwnerByIdentity() { return identityOwner; } } },
+      { provide: LINGUALOOP_IDENTITY_STORE, useValue: { async findOwnerByIdentity() { return identityOwner; }, async findApprovalByOwner() { return { email: 'student@example.test', role: 'student' }; } } },
       { provide: LINGUALOOP_SESSION_STORE, useValue: { async isSessionActive(owner, session) { return owner === identityOwner && session === sessionId; } } },
       ConfiguredVerifiedRequestGuard,
+      require('../../dist/auth/role.guard.js').RoleGuard,
     ],
   })(TestModule);
   const app = await NestFactory.create(TestModule, { logger: false });

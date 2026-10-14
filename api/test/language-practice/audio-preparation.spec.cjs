@@ -41,7 +41,10 @@ async function fixture({ autoClose = true, output = 'valid' } = {}) {
     else if (output === 'symlink') {
       const target = join(require('node:path').dirname(outputPath), 'target.wav');
       writeFileSync(target, validWav()); symlinkSync(target, outputPath);
-    } else if (output === 'oversized') truncateSync(outputPath, 1024 * 1024 + 1);
+    } else if (output === 'oversized') {
+      writeFileSync(outputPath, validWav());
+      truncateSync(outputPath, 1024 * 1024 + 1);
+    }
     if (autoClose) queueMicrotask(() => child.emit('close', 0));
     return child;
   };
@@ -49,8 +52,13 @@ async function fixture({ autoClose = true, output = 'valid' } = {}) {
 }
 const opts = (f, extra = {}) => ({ ffmpegExecutable: '/tools/ffmpeg', tempRoot: f.root, spawnChild: f.spawnChild, ...extra });
 const waitForChild = async (f) => { while (!f.child) await new Promise((resolve) => setTimeout(resolve, 1)); };
-const safeFailure = (promise) => assert.rejects(promise, (error) => {
+const safeFailure = (promise, code) => assert.rejects(promise, (error) => {
   assert.equal(error.message, 'Audio preparation failed');
+  const { getSttDiagnostic } = require('../../dist/language-practice/fastconformer-host.js');
+  const detail = getSttDiagnostic(error);
+  assert.equal(detail.component, 'audio_preparation');
+  assert.equal(detail.phase, 'preparation');
+  if (code) assert.equal(detail.code, code);
   assert.doesNotMatch(error.message, /ffmpeg|stderr|private|lingualoop-audio-test/);
   return true;
 });
@@ -60,7 +68,7 @@ test('validates exact MIME and size before creating a temp directory or spawning
   try {
     for (const [input, mime] of [[Buffer.alloc(0), 'audio/wav'], [Buffer.alloc(1), 'Audio/wav'],
       [Buffer.alloc(1), 'audio/webm; codecs=opus'], [Buffer.alloc(2 * 1024 * 1024 + 1), 'audio/wav']]) {
-      await safeFailure(withPreparedAudio(input, mime, () => 'no', opts(f)));
+      await safeFailure(withPreparedAudio(input, mime, () => 'no', opts(f)), 'preparation_input');
     }
     assert.deepEqual(await readdir(f.root), []);
     assert.equal(f.calls.length, 0);
@@ -113,6 +121,25 @@ test('keeps the unique temporary directory until callback settles and cleans aft
   } finally { await f.cleanup(); }
 });
 
+test('preserves only trusted callback diagnostics and no-speech while cleaning', async () => {
+  const { SttDiagnosticError, FastConformerNoSpeechError, getSttDiagnostic } = require('../../dist/language-practice/fastconformer-host.js');
+  const f = await fixture();
+  try {
+    for (const error of [new SttDiagnosticError('startup_malformed'), new FastConformerNoSpeechError()]) {
+      await assert.rejects(withPreparedAudio(Buffer.from('x'), 'audio/wav', () => { throw error; }, opts(f)), (actual) => {
+        assert.equal(actual, error);
+        assert.ok(getSttDiagnostic(actual));
+        return true;
+      });
+      assert.deepEqual(await readdir(f.root), []);
+    }
+    const untrusted = new Error('SECRET path credential speech');
+    untrusted.code = 'startup_malformed';
+    await safeFailure(withPreparedAudio(Buffer.from('x'), 'audio/wav', () => { throw untrusted; }, opts(f)));
+    assert.deepEqual(await readdir(f.root), []);
+  } finally { await f.cleanup(); }
+});
+
 test('accepts LIST metadata before the data chunk', async () => {
   const f = await fixture({ output: 'list' });
   try {
@@ -126,7 +153,7 @@ test('rejects missing, malformed, symlinked and oversized WAV output without cal
     await t.test(output, async () => {
       const f = await fixture({ output });
       try {
-        await safeFailure(withPreparedAudio(Buffer.from('x'), 'audio/wav', () => assert.fail('invalid WAV reached callback'), opts(f)));
+        await safeFailure(withPreparedAudio(Buffer.from('x'), 'audio/wav', () => assert.fail('invalid WAV reached callback'), opts(f)), 'preparation_wav');
         assert.deepEqual(await readdir(f.root), []);
       } finally { await f.cleanup(); }
     });
@@ -151,7 +178,7 @@ test('sanitizes spawn and nonzero-exit failures and cleans temporary files', asy
     const f = await fixture();
     try {
       const options = opts(f, { spawnChild: () => { throw new Error('/private ffmpeg detail'); } });
-      await safeFailure(withPreparedAudio(Buffer.from('x'), 'audio/wav', () => null, options));
+      await safeFailure(withPreparedAudio(Buffer.from('x'), 'audio/wav', () => null, options), 'preparation_spawn');
       assert.deepEqual(await readdir(f.root), []);
     } finally { await f.cleanup(); }
   });
@@ -163,7 +190,7 @@ test('sanitizes spawn and nonzero-exit failures and cleans temporary files', asy
       f.child.stderr.write('/private ffmpeg stderr');
       f.child.emit('exit', 2);
       f.child.emit('close', 2);
-      await safeFailure(promise);
+      await safeFailure(promise, 'preparation_process');
       assert.deepEqual(await readdir(f.root), []);
     } finally { await f.cleanup(); }
   });
@@ -177,7 +204,7 @@ test('timeout escalates TERM to KILL and waits for delayed close before cleanup'
     assert.deepEqual(f.child.signals, ['SIGTERM', 'SIGKILL']);
     assert.equal((await readdir(f.root)).length, 1);
     setTimeout(() => f.child.emit('close', null), 10);
-    await safeFailure(promise);
+    await safeFailure(promise, 'preparation_timeout');
     assert.deepEqual(await readdir(f.root), []);
   } finally { await f.cleanup(); }
 });

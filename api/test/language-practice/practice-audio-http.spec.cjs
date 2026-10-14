@@ -39,9 +39,10 @@ async function createServer(t, { prepare } = {}) {
         if (value !== token) throw new InvalidBearerTokenError();
         return { issuer: 'google', subject: 'verified-subject', sessionId };
       } } },
-      { provide: LINGUALOOP_IDENTITY_STORE, useValue: { async findOwnerByIdentity() { return ownerId; } } },
+      { provide: LINGUALOOP_IDENTITY_STORE, useValue: { async findOwnerByIdentity() { return ownerId; }, async findApprovalByOwner() { return { email: 'student@example.test', role: 'student' }; } } },
       { provide: LINGUALOOP_SESSION_STORE, useValue: { async isSessionActive(owner, session) { return owner === ownerId && session === sessionId; } } },
       ConfiguredVerifiedRequestGuard,
+      require('../../dist/auth/role.guard.js').RoleGuard,
     ],
   })(TestModule);
   const app = await NestFactory.create(TestModule, { logger: false });
