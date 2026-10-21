@@ -14,6 +14,24 @@ require.extensions['.ts'] = (module, filename) => {
 
 const { AuthSession } = require('../src/auth-session.ts');
 const { LanguagePracticeClient, LanguagePracticeClientError } = require('../src/features/language-practice/language-practice-client.ts');
+const { parseReportLearningSupport } = require('../src/features/language-practice/language-practice-client.ts');
+
+const learningSupportBody = {
+  corrections: [{ sequence: 1, suggestedEnglish: 'I would like to visit Peru.', translationEs: 'Me gustaría visitar Perú.', explanationEn: 'Use visit for a destination.', explanationEs: 'Usa visit para un destino.' }],
+  strengths: [{ textEn: 'You named a destination.', textEs: 'Mencionaste un destino.', evidenceSequences: [1] }],
+  recommendations: [{ textEn: 'Practise describing your travel plans.', textEs: 'Practica describir tus planes de viaje.', evidenceSequences: [1] }],
+};
+
+test('learning support validates bilingual content and rejects duplicate or malformed evidence', () => {
+  assert.deepEqual(parseReportLearningSupport(learningSupportBody), learningSupportBody);
+  for (const invalid of [
+    { ...learningSupportBody, extra: true },
+    { ...learningSupportBody, corrections: [...learningSupportBody.corrections, ...learningSupportBody.corrections] },
+    { ...learningSupportBody, corrections: [{ ...learningSupportBody.corrections[0], suggestedEnglish: 'x'.repeat(501) }] },
+    { ...learningSupportBody, strengths: [{ ...learningSupportBody.strengths[0], evidenceSequences: [1, 1] }] },
+    { ...learningSupportBody, recommendations: [{ ...learningSupportBody.recommendations[0], evidenceSequences: [0] }] },
+  ]) assert.throws(() => parseReportLearningSupport(invalid), LanguagePracticeClientError);
+});
 const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { 'content-type': 'application/json' },
 });
@@ -211,6 +229,26 @@ test('does not retry a language-practice POST after network failure, 409, or 503
   }
 });
 
+test('deduplicates concurrent report loads across client instances', async () => {
+  let finishResponse;
+  let posts = 0;
+  const first = authenticatedFetch(() => {
+    posts++;
+    return new Promise(resolve => { finishResponse = resolve; });
+  });
+  const second = authenticatedFetch(() => {
+    posts++;
+    return json(reportBody);
+  });
+  const firstRequest = new LanguagePracticeClient(first.auth).getOrCreateReport(sessionId);
+  const secondRequest = new LanguagePracticeClient(second.auth).getOrCreateReport(sessionId);
+  assert.strictEqual(secondRequest, firstRequest);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(posts, 1);
+  finishResponse(json(reportBody));
+  assert.deepEqual(await Promise.all([firstRequest, secondRequest]), [reportBody, reportBody]);
+});
+
 test('does not replay turn admission conflicts or retry a returned FAILED turn', async () => {
   let posts = 0;
   const conflictSession = authenticatedFetch(() => {
@@ -359,4 +397,26 @@ test('rejects invalid input before any network request and constrains POST paths
   await assert.rejects(client.createSession({ level: 'Z9', topic: 'travel', durationMinutes: 5 }), { kind: 'invalid-input' });
   await assert.rejects(client.submitTurn(sessionId, new Blob(['x'], { type: 'text/plain' }), clientTurnId), { kind: 'invalid-input' });
   assert.equal(calls.length, 0);
+});
+
+test('learning support uses read-only cache lookup and deduplicates explicit generation across clients', async () => {
+  let cached = false;
+  const path = `/api/language-practice/sessions/${sessionId}/report/learning-support`;
+  const { auth, calls } = authenticatedFetch((url, init) => {
+    assert.equal(url, path);
+    if (init.method === 'GET') return cached ? json(learningSupportBody) : new Response(null, { status: 204 });
+    assert.equal(init.method, 'POST');
+    assert.deepEqual(JSON.parse(init.body), {});
+    cached = true;
+    return json(learningSupportBody);
+  });
+  const first = new LanguagePracticeClient(auth);
+  const second = new LanguagePracticeClient(auth);
+  assert.equal(await first.getCachedReportLearningSupport(sessionId), null);
+  assert.equal(calls.filter(call => call.url === path && call.init.method === 'POST').length, 0);
+  const request = first.prepareReportLearningSupport(sessionId);
+  assert.equal(second.prepareReportLearningSupport(sessionId), request);
+  assert.deepEqual(await request, learningSupportBody);
+  assert.equal(calls.filter(call => call.url === path && call.init.method === 'POST').length, 1);
+  assert.deepEqual(await second.getCachedReportLearningSupport(sessionId), learningSupportBody);
 });

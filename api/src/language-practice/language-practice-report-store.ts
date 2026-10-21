@@ -6,6 +6,7 @@ import { unassessedCoverage, validateParameterCoverage, type ParameterCoverage }
 import type { QueryExecutor, QueryResult } from '../auth/identity-store';
 import type { CompletedOwnedTurnProjection, LanguagePracticeReportFallback } from './language-practice-report-fallback';
 import { buildLanguagePracticeReportFallback } from './language-practice-report-fallback';
+import { parseReportLearningSupport, type ReportLearningSupport, type ReportLearningSupportInput } from './report-learning-support';
 
 export interface TransactionalQueryExecutor extends QueryExecutor {
   withTransaction<T>(callback: (tx: QueryExecutor) => Promise<T>): Promise<T>;
@@ -31,6 +32,11 @@ export type BeginAiReportResult =
       difficulty: PracticeDifficulty | null;
       parameters: PracticeParameter[];
     };
+
+export type BeginLearningSupportResult =
+  | { kind: 'existing'; support: ReportLearningSupport }
+  | { kind: 'busy' }
+  | { kind: 'claimed'; token: string; input: ReportLearningSupportInput };
 
 export class LanguagePracticeReportStoreError extends Error {
   constructor() {
@@ -153,7 +159,7 @@ function report(rowValue: unknown, sessionId: string): LanguagePracticeReport {
   const row = object(rowValue);
   if (typeof row.generated_with_ai !== 'boolean') throw new LanguagePracticeReportStoreError();
   const content = object(row.content);
-  if (Object.keys(content).sort().join(',') !== 'corrections,recommendations,strengths,summary') {
+  if (Object.keys(content).filter(key => key !== 'learningSupport').sort().join(',') !== 'corrections,recommendations,strengths,summary') {
     throw new LanguagePracticeReportStoreError();
   }
   if (typeof content.summary !== 'string' || !content.summary.trim() || content.summary.length > 400 ||
@@ -217,6 +223,67 @@ function completedTurn(value: unknown): CompletedOwnedTurnProjection {
 export class LanguagePracticeReportStore {
   constructor(private readonly executor: TransactionalQueryExecutor) {
     if (!executor || typeof executor.withTransaction !== 'function') throw new TypeError('A transactional query executor is required.');
+  }
+
+  /** Private cache read only. No provider construction, report generation or claim acquisition. */
+  async getCachedLearningSupport(ownerId: string, sessionId: string): Promise<ReportLearningSupport | null> {
+    uuid(ownerId); uuid(sessionId);
+    return this.executor.withTransaction(async tx => {
+      const session = rows(await tx.query(LOCK_SESSION_SQL, [ownerId, sessionId]), 0, 1)[0];
+      if (!session) throw new LanguagePracticeReportAdmissionError('not_found');
+      const existing = rows(await tx.query(FIND_REPORT_SQL, [ownerId, sessionId]), 0, 1)[0];
+      if (!existing || !Object.hasOwn(object(object(existing).content), 'learningSupport')) return null;
+      const turns = rows(await tx.query(COMPLETED_TURNS_SQL, [ownerId, sessionId]), 0, 256).map(completedTurn);
+      return parseReportLearningSupport(object(object(existing).content).learningSupport, { report: report(existing, sessionId), turns });
+    });
+  }
+
+  /** Reuse the durable report lease so concurrent processes cannot bill the same enrichment twice. */
+  async beginLearningSupport(ownerId: string, sessionId: string): Promise<BeginLearningSupportResult> {
+    uuid(ownerId); uuid(sessionId);
+    return this.executor.withTransaction(async tx => {
+      const session = rows(await tx.query(LOCK_SESSION_SQL, [ownerId, sessionId]), 0, 1)[0];
+      if (!session) throw new LanguagePracticeReportAdmissionError('not_found');
+      const state = object(session);
+      if (state.status !== 'COMPLETED' && state.status !== 'EXPIRED' && !(state.status === 'ACTIVE' && state.elapsed === true)) {
+        throw new LanguagePracticeReportAdmissionError('not_closed');
+      }
+      const existing = rows(await tx.query(FIND_REPORT_SQL, [ownerId, sessionId]), 0, 1)[0];
+      if (!existing) throw new LanguagePracticeReportAdmissionError('not_closed');
+      const turns = rows(await tx.query(COMPLETED_TURNS_SQL, [ownerId, sessionId]), 0, 256).map(completedTurn);
+      const input = { report: report(existing, sessionId), turns };
+      const content = object(object(existing).content);
+      if (Object.hasOwn(content, 'learningSupport')) return { kind: 'existing', support: parseReportLearningSupport(content.learningSupport, input) };
+      const token = randomUUID();
+      const claim = rows(await tx.query(CLAIM_REPORT_SQL, [sessionId, token]), 0, 1);
+      if (!claim.length) return { kind: 'busy' };
+      if (object(claim[0]).claim_token !== token) throw new LanguagePracticeReportStoreError();
+      return { kind: 'claimed', token, input };
+    });
+  }
+
+  async finalizeLearningSupport(ownerId: string, sessionId: string, token: string, value: ReportLearningSupport): Promise<ReportLearningSupport | null> {
+    uuid(ownerId); uuid(sessionId); uuid(token);
+    return this.executor.withTransaction(async tx => {
+      if (!rows(await tx.query(LOCK_VALID_CLAIM_SQL, [ownerId, sessionId, token]), 0, 1).length) return null;
+      const existing = rows(await tx.query(FIND_REPORT_SQL, [ownerId, sessionId]), 1, 1)[0];
+      const turns = rows(await tx.query(COMPLETED_TURNS_SQL, [ownerId, sessionId]), 0, 256).map(completedTurn);
+      const input = { report: report(existing, sessionId), turns };
+      const content = object(object(existing).content);
+      const support = parseReportLearningSupport(Object.hasOwn(content, 'learningSupport') ? content.learningSupport : value, input);
+      if (!Object.hasOwn(content, 'learningSupport')) {
+        rows(await tx.query(`
+          UPDATE lingualoop_language_practice_reports AS r
+          SET content = jsonb_set(r.content, '{learningSupport}', $3::jsonb, TRUE)
+          FROM lingualoop_language_practice_sessions AS s
+          WHERE r.session_id = s.id AND s.owner_id = $1::uuid AND s.id = $2::uuid
+            AND NOT (r.content ? 'learningSupport')
+          RETURNING r.session_id
+        `, [ownerId, sessionId, JSON.stringify(support)]), 1, 1);
+      }
+      await tx.query(DELETE_CLAIM_SQL, [sessionId, token]);
+      return support;
+    });
   }
 
   /** Read-only teacher projection: same durable parser, no student impersonation or generation. */

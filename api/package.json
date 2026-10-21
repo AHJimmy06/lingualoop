@@ -6,11 +6,11 @@
     "node": "^20.19.0 || >=22.12.0"
   },
   "scripts": {
-    "dev": "nest start --watch",
+    "dev": "node --env-file=../.env ./node_modules/@nestjs/cli/bin/nest.js start --watch",
     "build": "nest build",
-    "start": "node dist/main",
-    "start:dev": "nest start --watch",
-    "migrate": "node dist/db/migrate.js"
+    "start": "node --env-file=../.env dist/main",
+    "start:dev": "node --env-file=../.env ./node_modules/@nestjs/cli/bin/nest.js start --watch",
+    "migrate": "node --env-file=../.env dist/db/migrate.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.14",

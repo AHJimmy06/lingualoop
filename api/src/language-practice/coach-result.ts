@@ -95,6 +95,7 @@ function hasExplicitNoCorrection(feedback: string): boolean {
     'já está correta', 'não precisava de correção',
   ]
   return noCorrectionPattern.test(feedback) ||
+    /^(?:la|tu) (?:frase|oración|expresión|pregunta|respuesta) (?:ya )?es (?:gramaticalmente )?(?:correcta|natural)(?: y (?:correcta|natural))?[.!]?$/.test(feedback.trim().toLocaleLowerCase()) ||
     explicitPhrases.some((phrase) => normalized.includes(normalize(phrase)))
 }
 

@@ -24,7 +24,7 @@ test('cover lifecycle owns URLs, skips absent covers, falls back on fetch/decode
     const props = { practice: { id, hasImage: true, setup: { topic: 'travel' } }, className: 'cover' };
     const mount = input => { effects.length = 0; const element = PracticeImage(input); const cleanup = effects.shift()(); return { element, cleanup }; };
     let render = mount({ ...props, practice: { ...props.practice, hasImage: false } });
-    assert.equal(calls, 0); assert.match(render.element.props.src, /travel-scene.svg/); render.cleanup();
+    assert.equal(calls, 0); assert.match(render.element.props.src, /travel-scene.webp/); render.cleanup();
     result = Promise.resolve(new Blob(['jpeg'], { type: 'image/jpeg' }));
     render = mount(props); await tick();
     assert.equal(state.url, made[0]);

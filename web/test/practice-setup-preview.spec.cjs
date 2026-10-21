@@ -29,13 +29,13 @@ test('twelve variants share four local scenes with one composite selection and a
     assert.equal((markup.match(/aria-pressed="true"/g) ?? []).length, 1);
     assert.equal((markup.match(/<button/g) ?? []).length, 12);
     assert.equal((markup.match(/alt=""/g) ?? []).length, 12);
-    assert.match(markup, /grid-cols-2/); // Preserve two selectable columns on mobile.
-    assert.ok(markup.includes('lg:grid-cols-[repeat(auto-fill,minmax(16rem,1fr))]'), 'desktop fills available width with readable card-sized columns');
     assert.match(markup, /sm:min-h-52/); // Wider layouts must not enlarge artwork height.
     assert.match(markup, /focus-visible:ring/);
     assert.match(markup, /motion-reduce:transition-none/);
     assert.doesNotMatch(markup, /<select|(?:src|href)="https?:\/\//);
   }
+  assert.match(setupSource, /role="group" className="grid grid-cols-1 gap-4 lg:grid-cols-2" aria-label="All available practices">[\s\S]*<DefaultTopicTiles[\s\S]*<PracticeCatalogue/);
+  assert.doesNotMatch(setupSource, /auto-fill|auto-fit|sm:grid-cols-2/);
 });
 test('settings are adjacent to logout, use a keyboard modal and apply only to defaults', () => {
   assert.match(setupSource, /<PracticeSettingsDialog[^>]*\/>.*<Button/);
@@ -47,11 +47,20 @@ test('settings are adjacent to logout, use a keyboard modal and apply only to de
   assert.match(settingsSource, /role="tooltip"/);
   assert.match(settingsSource, /group-focus-within:opacity-100/);
   assert.match(settingsSource, /default activities only/);
-  assert.match(settingsSource, /<select/g);
+  assert.equal((settingsSource.match(/<select/g) || []).length, 2, 'settings should expose CEFR and duration only');
+  assert.doesNotMatch(settingsSource, /Task difficulty|LANGUAGE_PRACTICE_DIFFICULTIES/);
+  assert.match(setupSource, /Choose a conversation or a teacher-created practice/);
+  assert.doesNotMatch(setupSource, /Choose the same activity at Easy, Medium or Hard/);
+  assert.match(setupSource, /CEFR \{preferences\.level\} · \{preferences\.durationMinutes\} minutes<\/p>/);
   assert.match(setupSource, /client\.createSession\(\{ \.\.\.preferences, topic:/);
   const catalogue = fs.readFileSync(path.join(__dirname, '../src/features/language-practice/PracticeCatalogue.tsx'), 'utf8');
-  assert.match(catalogue, /Dialog\.Title/);
-  assert.match(catalogue, /Review the requirements before starting/);
+  assert.doesNotMatch(catalogue, /Teacher-created practices|Select a practice to review/);
+  assert.match(catalogue, /<Dialog\.Root open=\{open\}/);
+  assert.match(catalogue, /fixed settings and conversation requirements/);
   assert.match(catalogue, /createCustomSession\(\{ practiceId: practice\.id \}\)/);
   assert.doesNotMatch(catalogue, /readPreferences|savePreferences/);
+  assert.match(setupSource, /setPracticeDetailsOpen\(true\)/);
+  assert.match(setupSource, /<Dialog\.Title className="text-xl font-semibold">Practice details/);
+  assert.match(setupSource, /<Button className="mt-4 w-full" size="lg"[\s\S]*'Start practice'/);
+  assert.doesNotMatch(setupSource, /Selected:.*Start practice/);
 });

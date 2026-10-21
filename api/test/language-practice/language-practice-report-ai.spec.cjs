@@ -46,10 +46,36 @@ test('sends bounded untrusted session evidence once with strict JSON schema and 
   assert.equal(fake.calls[0].text.format.strict, true);
   assert.equal(fake.calls[0].text.format.schema.additionalProperties, false);
   const schemaText = JSON.stringify(fake.calls[0].text.format.schema);
-  assert.doesNotMatch(schemaText, /maxLength|maxItems|minLength/);
+  assert.match(schemaText, /maxLength|maxItems|minLength/);
+  const properties = fake.calls[0].text.format.schema.properties;
+  assert.equal(properties.summary.maxLength, 400);
+  assert.equal(properties.strengths.maxItems, 3);
+  assert.equal(properties.recommendations.items.maxLength, 240);
+  assert.equal(properties.corrections.items.properties.original.maxLength, 500);
+  assert.match(fake.calls[0].input[0].content, /nunca los recortes ni reformules/);
   assert.deepEqual(fake.calls[0].input.map(({ role }) => role), ['system', 'user']);
+  assert.match(fake.calls[0].input[0].content, /topic como contexto temático/);
+  assert.match(fake.calls[0].input[0].content, /número de turno o un fragmento breve/);
+  assert.match(fake.calls[0].input[0].content, /acciones próximas, específicas y realizables/);
+  assert.match(fake.calls[0].input[0].content, /No evalúes el texto del coach/);
   assert.match(fake.calls[0].input[1].content, /UNTRUSTED_SESSION_DATA/);
   assert.match(fake.calls[0].input[1].content, /Ayer yo voy al parque/);
+});
+
+test('custom-practice evaluation explicitly follows teacher goals, semantic evidence, and careful status distinctions', async () => {
+  const parameter = { id: '11111111-1111-4111-8111-111111111111', requirement: 'Ask for directions politely.' };
+  const withCoverage = { ...output, parameterCoverage: [{
+    parameterId: parameter.id, requirement: parameter.requirement, status: 'unassessed', evidenceSequences: [],
+    explanation: 'No hay evidencia suficiente para evaluar este requisito.',
+  }] };
+  const fake = fakeClient({ status: 'completed', output_text: JSON.stringify(withCoverage) });
+  const adapter = new LanguagePracticeReportAiAdapter(fake.client, 'model');
+  assert.deepEqual(await adapter.generate(turns, { parameters: [parameter] }), withCoverage);
+  const system = fake.calls[0].input[0].content;
+  assert.match(system, /rúbrica principal para los requisitos del docente/);
+  assert.match(system, /paráfrasis, no palabras clave/);
+  assert.match(system, /La ausencia de demostración no implica automáticamente not-met/);
+  assert.match(system, /objetivos no observados/);
 });
 
 test('difficulty is private quoted task context, not proficiency or received support', async () => {
@@ -322,8 +348,14 @@ test('reference-informed instructions bound learner-only evidence and coverage o
   const fake = fakeClient({ status: 'completed', output_text: JSON.stringify(report) });
   await new LanguagePracticeReportAiAdapter(fake.client, 'offline').generate(turns, { parameters });
   const policy = fake.calls[0].input[0].content;
-  for (const term of ['amplitud', 'vocabulario', 'exactitud', 'desarrollo temático', 'cohesión', 'precisión', 'complejidad', 'impacto', 'puntuación', 'ortografía', 'oportunidad', 'fragmentos', 'objetivo']) assert.ok(policy.includes(term), term);
-  assert.match(policy, /strengths.*vacío/);
+  for (const term of ['amplitud', 'vocabulario', 'control gramatical', 'desarrollo temático', 'cohesión', 'precisión', 'complejidad', 'impacto comunicativo', 'puntuación', 'ortografía', 'oportunidad', 'fragmento breve', 'objetivo']) assert.ok(policy.includes(term), term);
+  assert.match(policy, /turnos completados del estudiante/);
+  assert.match(policy, /acciones próximas, específicas y realizables/);
+  assert.match(policy, /No evalúes el texto del coach/);
+  assert.match(policy, /marco formativo orientado a tareas/);
+  assert.match(policy, /propósito comunicativo y metas de la tarea/);
+  assert.match(policy, /no las intervenciones previas del interlocutor/);
+  assert.match(policy, /No asignes nivel CEFR, progreso, puntuación numérica/);
 });
 
 test('does not construct a provider client, read credentials, or configure a model', () => {

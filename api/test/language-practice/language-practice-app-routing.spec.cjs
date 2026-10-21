@@ -46,7 +46,7 @@ const { LANGUAGE_PRACTICE_REPORT_SERVICE } = require('../../dist/language-practi
 test('auth-only AppModule registers session creation without optional turn runtime', () => {
   const controllers = Reflect.getMetadata('controllers', AppModule);
   assert.ok(controllers.includes(LanguagePracticeSessionController));
-  assert.ok(!controllers.includes(LanguagePracticeTurnController));
+  assert.ok(controllers.includes(LanguagePracticeTurnController), 'turn submission stays registered when speech/coach configuration is absent');
   const providers = Reflect.getMetadata('providers', AppModule);
   assert.ok(providers.some((provider) => provider && provider.provide === LANGUAGE_PRACTICE_REPORT_SERVICE),
     'the report service is registered even without optional provider configuration');
@@ -56,4 +56,7 @@ test('auth-only AppModule registers session creation without optional turn runti
   assert.equal(Reflect.getMetadata(PATH_METADATA, method), 'sessions');
   assert.equal(Reflect.getMetadata(METHOD_METADATA, method), RequestMethod.POST);
   assert.equal(Reflect.getMetadata(PATH_METADATA, LanguagePracticeSessionController), 'language-practice');
+  const turns = LanguagePracticeSessionController.prototype.getSessionTurns;
+  assert.equal(Reflect.getMetadata(PATH_METADATA, turns), 'sessions/:sessionId/turns');
+  assert.equal(Reflect.getMetadata(METHOD_METADATA, turns), RequestMethod.GET);
 });

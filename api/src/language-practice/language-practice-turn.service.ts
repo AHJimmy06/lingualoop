@@ -4,6 +4,7 @@ import { getSttDiagnostic } from './fastconformer-host';
 import type { SttDiagnostic } from './fastconformer-host';
 import { LanguagePracticeTurnAdmissionError } from './language-practice-turn-store';
 import type { CoachResult } from './coach-result';
+import { getCoachDiagnostic, type CoachDiagnostic } from './coach-adapter';
 import type { LanguagePracticeLevel, LanguagePracticeTopic, PracticeDifficulty } from './language-practice-session-store';
 
 export const LANGUAGE_PRACTICE_MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024;
@@ -61,7 +62,7 @@ export type PracticeTurnDiagnosticStage =
   | 'reread'
   | 'response_session';
 
-export type PracticeTurnDiagnosticDetail = SttDiagnostic | {
+export type PracticeTurnDiagnosticDetail = SttDiagnostic | CoachDiagnostic | {
   code: 'unexpected_failure'; component: 'turn'; phase: 'orchestration';
 };
 
@@ -188,7 +189,7 @@ export class LanguagePracticeTurnService {
 
   private reportDiagnostic(stage: PracticeTurnDiagnosticStage, error?: unknown): void {
     try {
-      const detail = stage === 'stt' ? getSttDiagnostic(error) : undefined;
+      const detail = stage === 'stt' ? getSttDiagnostic(error) : stage === 'coach' ? getCoachDiagnostic(error) : undefined;
       this.diagnostics.report(stage, detail ?? {
         code: 'unexpected_failure', component: 'turn', phase: 'orchestration',
       });

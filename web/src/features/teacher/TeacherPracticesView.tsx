@@ -57,10 +57,10 @@ export function TeacherPracticesView() {
       setError(failure instanceof LanguagePracticeClientError ? failure.message : 'The practice was not confirmed. Try again.');
     } finally { pending.current = false; setBusy(false); }
   }
-  return <main className="w-full min-w-0 px-4 py-8 sm:px-6 sm:py-12 lg:px-8">
+  return <main className="authenticated-page [overflow-wrap:anywhere]">
     <RoleHeader title="Your practices" description="Create guided conversations for all students. Settings stay fixed when students start." />
     <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,42rem)_minmax(0,1fr)] xl:gap-8">
-    <form className="grid w-full min-w-0 max-w-3xl gap-5 rounded-xl border bg-card p-4 sm:p-6" onSubmit={event => void submit(event)} aria-label="Create practice">
+    <form className="grid w-full min-w-0 max-w-3xl gap-5 rounded-2xl border border-white/80 bg-white/90 p-4 shadow-lg shadow-slate-900/5 backdrop-blur sm:p-6" onSubmit={event => void submit(event)} aria-label="Create practice">
       <h2 className="text-lg font-semibold">Create practice</h2>
       <label className="grid gap-2 text-sm">Conversation theme<input className="rounded-md border bg-background p-3" required maxLength={120} value={title} disabled={busy} onChange={event => setTitle(event.target.value)} /></label>
       <fieldset disabled={busy} className="grid gap-4 sm:grid-cols-2"><legend className="mb-3 text-sm font-semibold">Fixed conversation settings</legend>

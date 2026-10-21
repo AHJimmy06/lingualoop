@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Dialog } from '@base-ui/react/dialog';
 import { authSession } from '../../auth-session';
 import { Button } from '../../components/ui/button';
-import { Dialog } from '@base-ui/react/dialog';
-import { X, ArrowUpRight } from 'lucide-react';
+import { X } from 'lucide-react';
 import { PracticeImage } from './PracticeImage';
 import { difficultyLabel } from './practice-preferences';
 import { LanguagePracticeClient, LanguagePracticeClientError, type TeacherPractice } from './language-practice-client';
@@ -26,7 +26,7 @@ export type ClaimPracticeStart = () => (() => void) | null;
 export function PracticeCards({ practices, disabled = false, claimStart }: {
   practices: TeacherPractice[]; disabled?: boolean; claimStart?: ClaimPracticeStart;
 }) {
-  return <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-[repeat(auto-fill,minmax(16rem,1fr))]">{practices.map(practice => <ChallengeCard key={practice.id} practice={practice} disabled={disabled} claimStart={claimStart} />)}</div>;
+  return <>{practices.map(practice => <ChallengeCard key={practice.id} practice={practice} disabled={disabled} claimStart={claimStart} />)}</>;
 }
 function ChallengeCard({ practice, disabled = false, claimStart }: {
   practice: TeacherPractice; disabled?: boolean; claimStart?: ClaimPracticeStart;
@@ -60,21 +60,26 @@ function ChallengeCard({ practice, disabled = false, claimStart }: {
     }
   }
   return <Dialog.Root open={open} onOpenChange={next => { if (!pending.current) { setOpen(next); setError(''); } }}>
-    <Dialog.Trigger disabled={disabled} className="group min-w-0 overflow-hidden whitespace-normal rounded-xl border bg-card text-left outline-none transition-shadow motion-reduce:transition-none hover:border-primary/50 hover:shadow-md focus-visible:ring-4 focus-visible:ring-ring/50">
+    <Dialog.Trigger disabled={disabled} className="group block min-w-0 w-full overflow-hidden whitespace-normal rounded-xl border bg-card text-left outline-none transition-shadow motion-reduce:transition-none hover:border-primary/50 hover:shadow-md focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-ring/50">
       <PracticeImage practice={practice} className="h-32 w-full object-cover sm:h-40" />
       <span className="grid min-w-0 grid-cols-1 gap-2 p-3 [overflow-wrap:anywhere] sm:p-4">
-        <span className="flex min-w-0 items-start justify-between gap-2 font-semibold"><span className="min-w-0 flex-1">{practice.title}</span><ArrowUpRight className="size-4 shrink-0 text-primary" aria-hidden="true" /></span>
+        <span className="flex min-w-0 items-start justify-between gap-2 font-semibold"><span className="min-w-0 flex-1">{practice.title}</span><span className="text-xs font-medium text-primary">View details</span></span>
         <span className="min-w-0 text-xs text-muted-foreground">CEFR {practice.setup.level} · {practice.setup.durationMinutes} min · {difficultyLabel(practice.setup.difficulty)}</span>
         <span className="min-w-0 text-sm text-muted-foreground">By {practice.teacherName}</span>
+        <span className="mt-1 grid min-w-0 gap-1 border-t pt-2 text-left">
+          <span className="text-xs font-semibold text-foreground">Practice goals</span>
+          {practice.parameters.slice(0, 2).map(parameter => <span key={parameter.id} className="flex min-w-0 items-start gap-1.5 text-xs leading-5 text-muted-foreground">
+            <span className="shrink-0 text-primary" aria-hidden="true">•</span><span className="min-w-0">{parameter.requirement}</span>
+          </span>)}
+          {practice.parameters.length > 2 && <span className="text-xs font-medium text-primary">+{practice.parameters.length - 2} more goals</span>}
+        </span>
       </span>
     </Dialog.Trigger>
     <Dialog.Portal><Dialog.Backdrop className="fixed inset-0 z-40 bg-black/40" /><Dialog.Popup className="fixed left-1/2 top-1/2 z-50 max-h-[90svh] w-[calc(100%_-_2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border bg-card p-5 shadow-xl sm:p-6">
-      <div className="flex items-start justify-between gap-3"><Dialog.Title className="text-xl font-semibold">Ready for this challenge?</Dialog.Title><Dialog.Close disabled={busy} render={<Button size="icon" variant="ghost" />} aria-label="Close challenge"><X className="size-4" aria-hidden="true" /></Dialog.Close></div>
-      <Dialog.Description className="mb-4 mt-2 text-sm leading-6 text-muted-foreground">Review the requirements before starting. Your default settings do not apply to this challenge.</Dialog.Description>
+      <div className="flex items-start justify-between gap-3"><div><Dialog.Title className="text-xl font-semibold">Practice details</Dialog.Title><Dialog.Description className="mt-1 text-sm text-muted-foreground">Review the fixed settings and conversation requirements before starting.</Dialog.Description></div><Dialog.Close disabled={busy} render={<Button size="icon" variant="ghost" />} aria-label="Close practice details"><X className="size-4" aria-hidden="true" /></Dialog.Close></div>
       <PracticeDetails practice={practice} />
-      {error && <p className="mt-4 text-sm text-destructive" role="alert">{error}</p>}
-      <Button className="mt-5 w-full" disabled={busy || disabled} onClick={() => void start()}>{busy ? 'Starting practice…' : 'Start teacher practice'}</Button>
-      <Link className="mt-4 block text-center text-sm text-primary underline" to={`/language-practice/practices/${practice.id}`} onClick={event => { if (busy || disabled) event.preventDefault(); }}>Open challenge details</Link>
+      {error && <p className="mt-3 text-sm text-destructive" role="alert">{error}</p>}
+      <Button className="mt-4 w-full" disabled={busy || disabled} onClick={() => void start()}>{busy ? 'Starting practice…' : 'Start practice'}</Button>
     </Dialog.Popup></Dialog.Portal>
   </Dialog.Root>;
 }
@@ -91,11 +96,9 @@ export function PracticeCatalogue({ disabled = false, claimStart }: { disabled?:
     });
     return () => { active = false; };
   }, [client, attempt]);
-  return <section className="mt-8 rounded-2xl border bg-muted/30 p-4 sm:p-6" aria-labelledby="catalogue-title">
-    <h2 id="catalogue-title" className="text-lg font-semibold">Teacher challenges</h2>
-    <p className="mt-2 text-sm text-muted-foreground">Dedicated challenges from all teachers. Review their fixed settings and requirements before you start.</p>
-    {error ? <div className="mt-3" role="alert"><p>{error}</p><Button variant="outline" onClick={() => setAttempt(value => value + 1)}>Try again</Button></div> : practices === null ? <p className="mt-3" role="status">Loading teacher practices…</p> : practices.length === 0 ? <p className="mt-3 text-sm">No teacher practices are available yet. You can still start a default practice.</p> : <PracticeCards practices={practices} disabled={disabled} claimStart={claimStart} />}
-  </section>;
+  if (error) return <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm" role="alert"><p>{error}</p><Button className="mt-2" variant="outline" onClick={() => setAttempt(value => value + 1)}>Try again</Button></div>;
+  if (practices === null) return <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground" role="status">Loading additional practices…</p>;
+  return practices.length ? <PracticeCards practices={practices} disabled={disabled} claimStart={claimStart} /> : null;
 }
 export function CustomPracticeView() {
   const { practiceId = '' } = useParams<{ practiceId: string }>();

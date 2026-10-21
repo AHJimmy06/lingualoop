@@ -10,8 +10,8 @@ export function PracticeCardPreview({ title, setup, requirements, imageUrl, onIm
   onImageError?: () => void;
 }) {
   const visibleRequirements = requirements.filter(requirement => requirement.trim());
-  return <section className="min-w-0 rounded-xl border bg-card p-4 [overflow-wrap:anywhere] sm:p-6" aria-labelledby="draft-preview-title">
-    <h2 id="draft-preview-title" className="text-lg font-semibold">Student-facing preview</h2>
+  return <section className="min-w-0 rounded-2xl border border-white/80 bg-white/90 p-4 shadow-lg shadow-slate-900/5 backdrop-blur [overflow-wrap:anywhere] sm:p-6" aria-labelledby="draft-preview-title">
+    <h2 id="draft-preview-title" className="text-xl font-semibold tracking-tight text-slate-900">Student-facing preview</h2>
     <p className="mt-2 text-sm text-muted-foreground">Not saved · This draft shows the theme, fixed settings and requirements students will see. It cannot start a session.</p>
     <article className="mt-5 min-w-0 rounded-xl border p-5">
       {imageUrl ? <img src={imageUrl} alt="Selected cover preview" className="mb-4 h-40 w-full rounded-lg object-cover" onError={onImageError} />

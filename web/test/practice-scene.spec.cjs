@@ -31,6 +31,12 @@ test('each supported topic selects its own replaceable scene and unknown topics 
   const scenes = topics.map(getPracticeScene);
   assert.deepEqual(scenes.map((scene) => scene.topic), topics);
   assert.equal(new Set(scenes.map((scene) => scene.image)).size, topics.length);
+  for (const scene of scenes) {
+    const file = require('node:path').join(__dirname, '../public', scene.image);
+    const bytes = fs.readFileSync(file);
+    assert.equal(bytes.subarray(8, 12).toString(), 'WEBP');
+    assert.ok(bytes.length < 1_000_000, 'backgrounds should be optimized for the web');
+  }
   assert.equal(getPracticeScene('not-a-topic').topic, 'everyday-conversation');
   assert.equal(getPracticeScene('not-a-topic').image, getPracticeScene('everyday-conversation').image);
 });
@@ -60,7 +66,7 @@ test('scene presents partner left and learner right with accessible neutral figu
   const scene = PracticeScene({ topic: 'studies' });
   const [background, stage, status] = scene.props.children;
   assert.equal(scene.props['aria-label'], 'Study conversation scene');
-  assert.equal(background.props.src, '/images/scenes/studies-scene.svg');
+  assert.equal(background.props.src, '/images/scenes/studies-scene.webp');
   assert.equal(background.props.alt, '');
   assert.equal(background.props['aria-hidden'], 'true');
   assert.equal(stage.type, 'div');

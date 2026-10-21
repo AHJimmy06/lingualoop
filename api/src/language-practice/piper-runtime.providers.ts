@@ -1,5 +1,5 @@
 import { Injectable, type OnApplicationShutdown, type Provider } from '@nestjs/common';
-import { resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import { PiperHost } from './piper-host';
 
 export const PIPER_RUNTIME = Symbol('PIPER_RUNTIME');
@@ -14,9 +14,11 @@ export type PiperRuntimeConfiguration = Record<'en' | 'es', PiperVoiceConfigurat
 export type PiperHostLike = { synthesize(text: string): Promise<Buffer> };
 
 function isExactAbsolutePath(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 1 && value.startsWith('/') &&
-    !value.includes('\0') && !value.split('/').some((part) => part === '.' || part === '..') &&
-    resolve(value) === value;
+  if (typeof value !== 'string' || value.length < 2 || value.includes('\0') || !isAbsolute(value) ||
+      value.split(/[\\/]+/).some((part) => part === '.' || part === '..')) return false;
+  return process.platform === 'win32'
+    ? resolve(value).toLowerCase() === value.replaceAll('/', '\\').replace(/\\+$/, '').toLowerCase()
+    : resolve(value) === value;
 }
 
 export function loadPiperRuntimeConfiguration(
@@ -44,11 +46,15 @@ export function loadPiperRuntimeConfiguration(
 /** Nest owns hosts, but each process and its model are started only on first synthesis. */
 @Injectable()
 export class PiperRuntimeHost implements OnApplicationShutdown {
-  private readonly hosts: Partial<Record<'en' | 'es', PiperHostLike>> = {};
+  private readonly hosts: Partial<Record<'en' | 'es', PiperHost>> = {};
 
   constructor(private readonly configuration: PiperRuntimeConfiguration) {}
 
-  getHost(voice: 'en' | 'es'): PiperHostLike {
+  async start(): Promise<void> {
+    await Promise.all((['en', 'es'] as const).map((voice) => this.getHost(voice).start()));
+  }
+
+  getHost(voice: 'en' | 'es'): PiperHost {
     return this.hosts[voice] ??= new PiperHost({
       voice,
       ...this.configuration[voice],

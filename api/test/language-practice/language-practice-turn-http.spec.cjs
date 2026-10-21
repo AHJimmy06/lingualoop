@@ -50,9 +50,9 @@ async function createServer(t, overrides = {}) {
       } },
       { provide: LinguaLoopTokenService, useValue: { async verifyBearerToken(value) {
         if (value !== token) throw new InvalidBearerTokenError();
-        return { issuer: 'google', subject: 'verified-subject', sessionId };
+        return { issuer: 'local', subject: '550e8400-e29b-41d4-a716-446655440002', sessionId };
       } } },
-      { provide: LINGUALOOP_IDENTITY_STORE, useValue: { async findOwnerByIdentity() { return ownerId; }, async findApprovalByOwner() { return { email: 'student@example.test', role: 'student' }; } } },
+      { provide: LINGUALOOP_IDENTITY_STORE, useValue: { async findOwnerByIdentity() { return ownerId; }, async findAccountByOwner() { return { name: 'Student', email: 'student@example.test', role: 'student' }; } } },
       { provide: LINGUALOOP_SESSION_STORE, useValue: { async isSessionActive(owner, session) { return owner === ownerId && session === sessionId; } } },
       ConfiguredVerifiedRequestGuard,
       require('../../dist/auth/role.guard.js').RoleGuard,
@@ -66,6 +66,16 @@ async function createServer(t, overrides = {}) {
 }
 
 const authHeaders = { authorization: `Bearer ${token}` };
+test('unconfigured turn processing returns explicit 503 and wipes audio instead of hiding the route', async () => {
+  const controller = new LanguagePracticeTurnController({}, {}, undefined);
+  const buffer = Buffer.from('test audio');
+  await assert.rejects(
+    controller.createTurn(sessionId, { clientTurnId }, { buffer, mimetype: 'audio/webm' }, { verifiedIdentity: { ownerId } }),
+    error => error.getStatus() === 503 && /not configured/.test(error.message),
+  );
+  assert.deepEqual(buffer, Buffer.alloc(buffer.length));
+});
+
 async function assertStatus(response, expected) {
   if (response.status !== expected) {
     const body = (await response.text()).slice(0, 300);

@@ -5,6 +5,7 @@ import {
   HttpException,
   Inject,
   Param,
+  Optional,
   Post,
   Req,
   UploadedFile,
@@ -41,7 +42,7 @@ export class LanguagePracticeTurnController {
   constructor(
     @Inject(LANGUAGE_PRACTICE_SESSION_STORE) private readonly sessions: SessionStore,
     @Inject(LANGUAGE_PRACTICE_TURN_STORE) private readonly turns: TurnStore,
-    @Inject(LANGUAGE_PRACTICE_TURN_SERVICE) private readonly turnService: LanguagePracticeTurnService,
+    @Optional() @Inject(LANGUAGE_PRACTICE_TURN_SERVICE) private readonly turnService?: LanguagePracticeTurnService,
   ) {}
 
   @Post('sessions/:sessionId/turns')
@@ -65,6 +66,9 @@ export class LanguagePracticeTurnController {
           file.buffer.length > LANGUAGE_PRACTICE_MAX_FILE_SIZE_BYTES ||
           !(LANGUAGE_PRACTICE_ACCEPTED_MIME_TYPES as readonly string[]).includes(file.mimetype)) {
         throw new BadRequestException('Invalid practice audio.');
+      }
+      if (!this.turnService) {
+        throw new HttpException('Conversation processing is not configured. Enable and configure the conversation coach, STT and TTS.', 503);
       }
       const result = await this.turnService.processTurn(ownerId, sessionId, body.clientTurnId, {
         buffer: file.buffer,

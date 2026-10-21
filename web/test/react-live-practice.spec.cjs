@@ -92,11 +92,11 @@ test('rendered conversation stacks on narrow screens and uses equal shrinkable w
   assert.match(tree.props.className, /\bauthenticated-page\b/);
   assert.doesNotMatch(tree.props.className, /max-w-3xl/);
   const all = nodes(tree);
-  const grid = all.find(node => node.props.className?.includes('lg:grid-cols-'));
+  const grid = all.find(node => node.props.className?.includes('md:grid-cols-'));
   assert.ok(grid, 'desktop split is present in the rendered session');
   assert.match(grid.props.className, /grid-cols-1/);
-  assert.match(grid.props.className, /lg:grid-cols-\[minmax\(0,1fr\)_minmax\(0,1fr\)\]/);
-  assert.doesNotMatch(grid.props.className, /(?:sm|md):grid-cols-|landscape:|24rem/);
+  assert.match(grid.props.className, /md:grid-cols-\[minmax\(0,1fr\)_minmax\(0,1fr\)\]/);
+  assert.doesNotMatch(grid.props.className, /sm:grid-cols-|landscape:|24rem/);
   assert.match(grid.props.className, /items-start/);
   const children = React.Children.toArray(grid.props.children);
   assert.equal(children[0].props.children.type, 'PracticeScene');
@@ -105,19 +105,23 @@ test('rendered conversation stacks on narrow screens and uses equal shrinkable w
   assert.deepEqual(nodes(children[3]).filter(node => node.type === 'Button').map(node => node.props.children),
     ['Refresh session', 'Finish practice']);
   assert.doesNotMatch(grid.props.className, /overflow-hidden|overflow-y-auto|fixed/);
-  assert.match(children[0].props.className, /lg:col-start-1.*lg:row-start-1.*lg:row-span-3/);
-  assert.match(children[1].props.className, /min-w-0.*lg:col-start-2.*lg:row-start-1/);
+  assert.match(children[0].props.className, /md:col-start-1.*md:row-start-1.*md:row-span-3/);
+  assert.match(children[1].props.className, /min-w-0.*md:col-start-2.*md:row-start-1/);
   assert.doesNotMatch(children[1].props.className, /row-span-/);
-  assert.match(children[2].props.className, /lg:col-start-2.*lg:row-start-2/);
-  assert.match(children[3].props.className, /lg:col-start-2.*lg:row-start-3/);
+  assert.match(children[2].props.className, /md:col-start-2.*md:row-start-2/);
+  assert.match(children[3].props.className, /md:col-start-2.*md:row-start-3/);
   assert.ok(nodes(children[2]).some(node => node.props.children === 'When you are ready, record your response.'));
   for (const child of children) {
-    assert.doesNotMatch(child.props.className, /(?:^|\s)(?:order-|(?:col|row)-start-)|(?:sm|md):(?:order-|(?:col|row)-start-)/);
-    assert.doesNotMatch(nodes(child).map(node => node.props.className || '').join(' '), /overflow-y-auto|overflow-scroll/);
+    assert.doesNotMatch(child.props.className, /(?:^|\s)(?:order-|(?:col|row)-start-)|sm:(?:order-|(?:col|row)-start-)/);
+    if (child !== children[1]) assert.doesNotMatch(nodes(child).map(node => node.props.className || '').join(' '), /overflow-y-auto|overflow-scroll/);
   }
   assert.ok(all.filter(node => node.type === 'MessageContent').every(node =>
     /min-w-0.*max-w-prose.*\[overflow-wrap:anywhere\]/.test(node.props.className)));
-  assert.doesNotMatch(all.map(node => node.props.className || '').join(' '), /\bsticky\b|\bh-\[|\bmax-h-/);
+  const history = all.find(node => node.type === 'ol');
+  assert.match(history.props.className, /min-h-0.*flex-1.*overflow-y-auto.*overscroll-contain/);
+  assert.equal(history.props.tabIndex, 0);
+  assert.match(children[1].props.className, /h-\[clamp\(18rem,45svh,32rem\)\]/);
+  assert.doesNotMatch(all.map(node => node.props.className || '').join(' '), /\bsticky\b/);
   assert.equal(all.filter(node => node.type === 'PracticeRecorder').length, 1);
 });
 
@@ -125,34 +129,38 @@ test('desktop practice grid receives the viewport remainder after normal-flow pa
   const tree = renderLiveSession(session).render();
   const classes = tree.props.className.split(/\s+/);
   assert.ok(classes.includes('min-h-svh'), 'the page supplies a viewport minimum, not a fixed height');
-  assert.ok(classes.includes('lg:flex'), 'only desktop establishes the height-allocation flex container');
-  assert.ok(classes.includes('lg:flex-col'));
+  assert.ok(classes.includes('md:flex'), 'only desktop establishes the height-allocation flex container');
+  assert.ok(classes.includes('md:flex-col'));
   assert.ok(!classes.includes('flex') && !classes.includes('flex-col'), 'mobile keeps its default page layout');
   const children = React.Children.toArray(tree.props.children).flatMap(node =>
     node.type === React.Fragment ? React.Children.toArray(node.props.children) : [node]);
   assert.equal(children[0].type, 'header');
   assert.equal(children[1].props['aria-label'], 'Session details');
   const grid = children[2];
-  assert.ok(grid.props.className.split(/\s+/).includes('lg:flex-1'), 'the grid grows into remaining space below header and metadata');
+  assert.ok(grid.props.className.split(/\s+/).includes('md:flex-1'), 'the grid grows into remaining space below header and metadata');
   assert.ok(!grid.props.className.split(/\s+/).includes('flex-1'), 'mobile does not allocate extra grid height');
-  assert.match(grid.props.className, /lg:grid-rows-\[auto_auto_1fr\]/);
-  assert.doesNotMatch(nodes(tree).map(node => node.props.className || '').join(' '),
+  assert.match(grid.props.className, /md:grid-rows-\[auto_auto_1fr\]/);
+  assert.doesNotMatch([tree, grid].map(node => node.props.className || '').join(' '),
     /(?:^|\s)(?:\S*:)?(?:h-|max-h-|min-h-\[|overflow-hidden|overflow-y-auto|overflow-scroll|absolute|fixed)|calc\(/);
 });
 
 test('desktop scene centers within its full three-row area without changing mobile alignment', () => {
   for (const turns of [[], session.turns, Array.from({ length: 20 }, (_, index) => ({ ...session.turns[0], sequence: index + 1 }))]) {
     const all = nodes(renderLiveSession({ ...session, turns }).render());
-    const grid = all.find(node => node.props.className?.includes('lg:grid-cols-'));
+    const grid = all.find(node => node.props.className?.includes('md:grid-cols-'));
     const children = React.Children.toArray(grid.props.children);
     const sceneClasses = children[0].props.className.split(/\s+/);
-    assert.ok(sceneClasses.includes('lg:self-center'), 'scene alignment is centered only on desktop');
-    assert.ok(sceneClasses.includes('lg:row-span-3'), 'center uses the complete right-column practice area');
+    assert.ok(sceneClasses.includes('md:self-center'), 'scene alignment is centered only on desktop');
+    assert.ok(sceneClasses.includes('md:row-span-3'), 'center uses the complete right-column practice area');
     assert.ok(!sceneClasses.includes('self-center'), 'mobile scene alignment remains unchanged');
     assert.ok(grid.props.className.split(/\s+/).includes('items-start'), 'other grid children retain top alignment');
     assert.equal(all.filter(node => node.type === 'PracticeScene').length, 1);
     assert.equal(children[0].props.children.type, 'PracticeScene');
     assert.equal(children[1].props['aria-labelledby'], 'conversation-title');
+    assert.match(children[1].props.className, /h-\[clamp\(18rem,45svh,32rem\)\]/);
+    const history = nodes(children[1]).find(node => node.type === 'ol');
+    if (turns.length) assert.match(history.props.className, /overflow-y-auto/);
+    assert.doesNotMatch(children[0].props.className, /overflow-y-auto/);
     assert.equal(children[2].props['aria-label'], 'Voice turn controls');
     assert.deepEqual(nodes(children[3]).filter(node => node.type === 'Button').map(node => node.props.children),
       ['Refresh session', 'Finish practice']);
@@ -260,6 +268,8 @@ test('live practice finishes explicitly, preserves pending and recorder guards, 
   assert.doesNotMatch(view, /controls preload="none"/);
   assert.doesNotMatch(view, /Use the replay button or audio controls|audio player controls/);
   assert.doesNotMatch(view, /Record up to 20 seconds\. If the result is uncertain, checking again reuses the exact recording and turn ID\.|Ready to record|Press Space when no interactive control is focused\. Maximum 20 seconds\.|Turn completed and saved\.|Your response is ready\.|Time is up\. Checking the session status before opening its report/);
+  assert.doesNotMatch(view, /Your response is being prepared\. You can check again shortly; no new recording is needed\.|We could not confirm your response yet\. Check again before recording another\.|Time is up, but your response is still being prepared/);
+  assert.match(view, /turnStatus && !turnController\.pending/);
   assert.match(view, /setTurnStatus\(''\);\s*const nextUrl = audioController\.current\.replace\(response\)/);
   assert.match(view, /align="end"[\s\S]*?<MessageHeader>You/);
   assert.match(view, /align="start"[\s\S]*?<MessageHeader>Conversation partner/);

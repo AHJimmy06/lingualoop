@@ -1,5 +1,14 @@
 import { buildCoachPromptMessages, type CoachPromptInput } from './coach-prompt'
-import { parseCoachResult, type CoachResult } from './coach-result'
+import { InvalidCoachResultError, parseCoachResult, type CoachResult } from './coach-result'
+import { APIError, APIConnectionError, APIConnectionTimeoutError } from 'openai'
+
+export type CoachDiagnostic = { component: 'coach'; phase: 'request'; code: 'output_validation' | 'output_incomplete' | 'output_refusal' | 'output_envelope' | 'provider_error' | 'provider_timeout' | 'provider_connection' | 'provider_http'; providerStatus?: number }
+const coachDiagnostics = new WeakMap<object, CoachDiagnostic>()
+export function getCoachDiagnostic(error: unknown): CoachDiagnostic | undefined {
+  if (!error || typeof error !== 'object') return undefined
+  const detail = coachDiagnostics.get(error)
+  return detail ? { ...detail } : undefined
+}
 
 export type CoachResponsesRequest = {
   model: string
@@ -56,7 +65,7 @@ const coachSchema = {
       minLength: 1,
       maxLength: MAX_ASSISTANT_RESPONSE_LENGTH,
       description:
-        'A distinct, natural spoken English continuation of normally 3–5 concise, coherent sentences, relevant to the learner and topic, using vocabulary appropriate to the declared CEFR level, with no unrelated lecture and no repetition of the Spanish evidence.',
+        'A warm, developed spoken English reply, usually 3–5 connected sentences within 500 characters: first answer or react specifically to the learner, add a relevant observation or detail, then always end with exactly one naturally connected question, the only question in the response. Use history and CEFR-appropriate language. Not an interview, quiz, checklist or lecture; do not repeat the Spanish evidence.',
     },
   },
   required: ['correctedPhrase', 'feedback', 'assistantResponse'],
@@ -77,6 +86,7 @@ export class CoachAdapter {
   }
 
   async respond(input: CoachPromptInput): Promise<CoachResult> {
+    let code: CoachDiagnostic['code'] = 'provider_error'
     try {
       const response = await this.client.responses.create({
         model: this.model,
@@ -93,16 +103,29 @@ export class CoachAdapter {
           },
         },
       })
+      code = 'output_envelope'
       if (!response || typeof response !== 'object') throw new Error()
       const record = response as Record<string, unknown>
-      if (record.status === 'incomplete') throw new Error()
-      if (hasRefusal(record.output)) throw new Error()
+      if (record.status === 'incomplete') { code = 'output_incomplete'; throw new Error() }
+      if (hasRefusal(record.output)) { code = 'output_refusal'; throw new Error() }
       if (typeof record.output_text !== 'string' || record.output_text.length > MAX_STRUCTURED_OUTPUT_LENGTH) {
         throw new Error()
       }
       return parseCoachResult(record.output_text, input.transcript)
-    } catch {
-      throw new CoachAdapterUnavailableError()
+    } catch (error) {
+      const detail: CoachDiagnostic = { code, component: 'coach', phase: 'request' }
+      if (error instanceof InvalidCoachResultError) detail.code = 'output_validation'
+      else if (error instanceof APIConnectionTimeoutError) detail.code = 'provider_timeout'
+      else if (error instanceof APIConnectionError) detail.code = 'provider_connection'
+      else if (error instanceof APIError) {
+        const status = Object.getOwnPropertyDescriptor(error, 'status')?.value
+        if ([400, 401, 403, 404, 409, 422, 429, 500, 502, 503, 504].includes(status)) {
+          detail.code = 'provider_http'; detail.providerStatus = status
+        }
+      }
+      const unavailable = new CoachAdapterUnavailableError()
+      coachDiagnostics.set(unavailable, detail)
+      throw unavailable
     }
   }
 }

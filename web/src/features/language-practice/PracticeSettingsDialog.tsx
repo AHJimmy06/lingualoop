@@ -3,8 +3,7 @@ import { Dialog } from '@base-ui/react/dialog';
 import { Settings, X } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import type { PracticeOptions } from './practice-options';
-import { difficultyLabel, type PracticePreferences } from './practice-preferences';
-import { LANGUAGE_PRACTICE_DIFFICULTIES } from './language-practice-client';
+import { type PracticePreferences } from './practice-preferences';
 
 export function PracticeSettingsDialog({ options, value, onSave, disabled = false }: {
   options: PracticeOptions | null; value: PracticePreferences; onSave: (value: PracticePreferences) => void; disabled?: boolean;
@@ -19,11 +18,10 @@ export function PracticeSettingsDialog({ options, value, onSave, disabled = fals
     <Dialog.Portal><Dialog.Backdrop className="fixed inset-0 z-40 bg-black/40" />
       <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 max-h-[90svh] w-[calc(100%_-_2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border bg-card p-6 shadow-xl">
         <div className="flex items-start justify-between gap-3"><Dialog.Title className="text-xl font-semibold">Default practice settings</Dialog.Title><Dialog.Close render={<Button size="icon" variant="ghost" />} aria-label="Close settings"><X className="size-4" aria-hidden="true" /></Dialog.Close></div>
-        <Dialog.Description className="mt-2 text-sm leading-6 text-muted-foreground">Apply these settings to default activities only. Teacher challenges always use their fixed settings. Difficulty describes task demand, not assessed proficiency; it does not change your CEFR target.</Dialog.Description>
+        <Dialog.Description className="mt-2 text-sm leading-6 text-muted-foreground">Apply these settings to default activities only. Teacher challenges always use their fixed settings. Choose difficulty on each activity card.</Dialog.Description>
         <form className="mt-5 grid gap-4" onSubmit={event => { event.preventDefault(); onSave(draft); setOpen(false); }}>
           <label className="grid gap-2 text-sm font-medium">CEFR target<select className="h-11 rounded-lg border bg-background px-3" value={draft.level} onChange={event => setDraft({ ...draft, level: event.target.value as PracticePreferences['level'] })}>{options?.levels.map(level => <option key={level}>{level}</option>)}</select></label>
           <label className="grid gap-2 text-sm font-medium">Practice duration<select className="h-11 rounded-lg border bg-background px-3" value={draft.durationMinutes} onChange={event => setDraft({ ...draft, durationMinutes: Number(event.target.value) as PracticePreferences['durationMinutes'] })}>{options?.durationsMinutes.map(duration => <option key={duration} value={duration}>{duration} minutes</option>)}</select></label>
-          <label className="grid gap-2 text-sm font-medium">Task difficulty<select className="h-11 rounded-lg border bg-background px-3" value={draft.difficulty} onChange={event => setDraft({ ...draft, difficulty: event.target.value as PracticePreferences['difficulty'] })}>{LANGUAGE_PRACTICE_DIFFICULTIES.map(difficulty => <option key={difficulty} value={difficulty}>{difficultyLabel(difficulty)}</option>)}</select></label>
           <Button type="submit" disabled={disabled || !options}>Save settings</Button>
         </form>
       </Dialog.Popup>

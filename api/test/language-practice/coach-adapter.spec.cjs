@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { CoachAdapter, CoachAdapterUnavailableError } = require('../../dist/language-practice/coach-adapter.js');
+const { CoachAdapter, CoachAdapterUnavailableError, getCoachDiagnostic } = require('../../dist/language-practice/coach-adapter.js');
 
 const input = {
   context: {
@@ -81,4 +81,18 @@ test('refusal, incomplete, malformed, oversized and provider failures are generi
 test('does not construct a provider client, read credentials, or configure a model', () => {
   const source = fs.readFileSync(path.join(__dirname, '../../src/language-practice/coach-adapter.ts'), 'utf8');
   assert.doesNotMatch(source, /new OpenAI|process\.env|API_KEY|fetch\s*\(|https?:\/\//i);
+});
+
+test('safe diagnostic distinguishes validation from provider failure without exposing response or credentials', async () => {
+  const invalid = new CoachAdapter(fakeClient({ status: 'completed', output_text: '{}' }).client, 'model');
+  await assert.rejects(invalid.respond(input), error => {
+    assert.deepEqual(getCoachDiagnostic(error), { code: 'output_validation', component: 'coach', phase: 'request' });
+    return true;
+  });
+  const provider = new CoachAdapter({ responses: { create: async () => { throw new Error('private provider text'); } } }, 'model');
+  await assert.rejects(provider.respond(input), error => {
+    assert.deepEqual(getCoachDiagnostic(error), { code: 'provider_error', component: 'coach', phase: 'request' });
+    assert.doesNotMatch(JSON.stringify(getCoachDiagnostic(error)), /private/);
+    return true;
+  });
 });

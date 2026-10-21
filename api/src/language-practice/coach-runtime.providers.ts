@@ -1,5 +1,5 @@
 import { lstatSync, readFileSync } from 'node:fs'
-import { isAbsolute } from 'node:path'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
 import OpenAI from 'openai'
 import { CoachAdapter, type CoachResponsesClient } from './coach-adapter'
 
@@ -13,8 +13,20 @@ export type OpenAIConstructor = new (options: {
 }) => unknown
 
 export type CoachRuntimeConfig = {
-  keyFilePath: string
+  keyFilePath?: string
+  apiKey?: string
   model: string
+}
+
+function isPrivateCoachFile(path: string, mode: number): boolean {
+  if (process.platform !== 'win32') return (mode & 0o077) === 0
+  const localAppData = process.env.LOCALAPPDATA
+  if (!localAppData) return false
+  const privateRoot = resolve(localAppData, 'LinguaLoop', 'secrets')
+  const relativePath = relative(privateRoot, resolve(path))
+  // Native Windows ACLs do not map to POSIX st_mode bits. Restrict to the per-user secret
+  // directory created for this dev setup rather than weakening the check for arbitrary paths.
+  return relativePath.length > 0 && relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath)
 }
 
 export class CoachRuntimeConfigurationError extends Error {
@@ -46,21 +58,27 @@ export function createOpenAIResponsesClient<T = CoachResponsesClient>(
   options: OpenAIResponsesClientFactoryOptions = {},
 ): T {
   if (
-    !config || typeof config.keyFilePath !== 'string' ||
-    !isAbsolute(config.keyFilePath) ||
+    !config ||
     !ALLOWED_COACH_MODELS.some((model) => model === config.model)
   ) {
     throw new CoachRuntimeConfigurationError()
   }
 
   try {
-    const inspectFile = options.inspectFile ?? ((filePath) => lstatSync(filePath))
-    const metadata = inspectFile(config.keyFilePath)
-    if (!metadata.isFile() || (metadata.mode & 0o077) !== 0) {
-      throw new CoachRuntimeConfigurationError()
+    let apiKey: string
+    if (config.apiKey !== undefined) {
+      if (!/^[\x21-\x7e]+$/.test(config.apiKey)) throw new CoachRuntimeConfigurationError()
+      apiKey = config.apiKey
+    } else {
+      if (typeof config.keyFilePath !== 'string' || !isAbsolute(config.keyFilePath)) throw new CoachRuntimeConfigurationError()
+      const inspectFile = options.inspectFile ?? ((filePath) => lstatSync(filePath))
+      const metadata = inspectFile(config.keyFilePath)
+      if (!metadata.isFile() || !isPrivateCoachFile(config.keyFilePath, metadata.mode)) {
+        throw new CoachRuntimeConfigurationError()
+      }
+      const readFile = options.readFile ?? ((filePath) => readFileSync(filePath, 'utf8'))
+      apiKey = parseCoachKeyFile(readFile(config.keyFilePath))
     }
-    const readFile = options.readFile ?? ((filePath) => readFileSync(filePath, 'utf8'))
-    const apiKey = parseCoachKeyFile(readFile(config.keyFilePath))
     const Sdk = options.OpenAIConstructor ?? (OpenAI as unknown as OpenAIConstructor)
     return new Sdk({ apiKey, maxRetries: 0, timeout: 90_000 }) as T
   } catch {

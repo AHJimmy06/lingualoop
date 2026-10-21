@@ -60,8 +60,10 @@ test('student catalogue renders all supplied teachers and read-only custom setup
   assert.match(cards, /&lt;script&gt;/);
   assert.match(cards, /<button/);
   assert.match(cards, /First Teacher/);
-  assert.match(cards, /\/images\/scenes\/travel-scene.svg/);
-  assert.match(cards, /grid-cols-2/);
+  assert.match(cards, /Practice goals/);
+  assert.match(cards, /Ask for directions/);
+  assert.match(cards, /\/images\/scenes\/travel-scene.webp/);
+  assert.equal((cards.match(/<button/g) || []).length, 2, 'practice cards should be emitted for the shared parent grid');
   const details = renderToStaticMarkup(React.createElement(PracticeDetails, { practice: base }));
   assert.match(details, /Ask for directions/);
   assert.match(details, /B1/);
@@ -71,7 +73,7 @@ test('report coverage distinguishes unassessed from failure and escapes explanat
   const { ParameterCoverageView } = require('../src/features/language-practice/ParameterCoverageView.tsx');
   const coverage = ['met', 'partial', 'not-met', 'unassessed'].map(status => ({ parameterId: status, status, requirement: 'Directions', evidenceSequences: status === 'unassessed' ? [] : [1], explanation: '<script>evidence</script>' }));
   const html = renderToStaticMarkup(React.createElement(ParameterCoverageView, { coverage }));
-  for (const text of ['Met', 'Partially met', 'Not met', 'Not assessed', 'not a failed requirement', 'Turn evidence', '&lt;script&gt;']) assert.ok(html.includes(text), text);
+  for (const text of ['Met', 'Partially met', 'Not met', 'Not assessed', 'not a failed requirement', 'Turn references', '&lt;script&gt;']) assert.ok(html.includes(text), text);
   assert.doesNotMatch(html, /<script>/);
 });
 const loginMarkup = props => renderToStaticMarkup(React.createElement(MemoryRouter, null, React.createElement(LoginView, props)));

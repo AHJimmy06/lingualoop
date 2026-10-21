@@ -6,11 +6,13 @@ import { createLanguagePracticeReportAiAdapter } from './language-practice-repor
 import { LanguagePracticeReportService } from './language-practice-report.service';
 import { LanguagePracticeSessionStore } from './language-practice-session-store';
 import { LanguagePracticeTurnStore } from './language-practice-turn-store';
+import { createReportLearningSupportAdapter, ReportLearningSupportService } from './report-learning-support.service';
 
 export const LANGUAGE_PRACTICE_SESSION_STORE = Symbol('LANGUAGE_PRACTICE_SESSION_STORE');
 export const LANGUAGE_PRACTICE_TURN_STORE = Symbol('LANGUAGE_PRACTICE_TURN_STORE');
 export const LANGUAGE_PRACTICE_REPORT_STORE = Symbol('LANGUAGE_PRACTICE_REPORT_STORE');
 export const LANGUAGE_PRACTICE_REPORT_SERVICE = Symbol('LANGUAGE_PRACTICE_REPORT_SERVICE');
+export const REPORT_LEARNING_SUPPORT_SERVICE = Symbol('REPORT_LEARNING_SUPPORT_SERVICE');
 
 export const LANGUAGE_PRACTICE_SESSION_PROVIDERS: Provider[] = [
   {
@@ -41,5 +43,10 @@ export const LANGUAGE_PRACTICE_SESSION_PROVIDERS: Provider[] = [
     inject: [LANGUAGE_PRACTICE_REPORT_STORE],
     useFactory: (store: LanguagePracticeReportStore) =>
       new LanguagePracticeReportService(store, createLanguagePracticeReportAiAdapter(process.env)),
+  },
+  {
+    provide: REPORT_LEARNING_SUPPORT_SERVICE,
+    inject: [LANGUAGE_PRACTICE_REPORT_STORE],
+    useFactory: (store: LanguagePracticeReportStore) => new ReportLearningSupportService(store, createReportLearningSupportAdapter(process.env)),
   },
 ];

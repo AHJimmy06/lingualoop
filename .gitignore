@@ -10,3 +10,6 @@ coverage/
 .DS_Store
 # Local Pi runtime state
 .atl/
+lingualoop.zip
+# Machine-local Python installation and download cache
+/api/Python/

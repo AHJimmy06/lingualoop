@@ -1,10 +1,36 @@
 # LinguaLoop
 
-LinguaLoop is an independent starting point for a language-practice application. This repository contains Vue/Vite and Nest API applications, Google login, and bounded protected speech endpoints; it is **not complete or production-ready**. The API now defines protected session-creation and multipart turn routes, but registers them only when Google auth, local STT, Piper, and the guarded coach adapter are all valid. The running API has not been restarted to verify that these routes are active; local inference and browser acceptance remain pending.
+LinguaLoop is an independent starting point for a language-practice application. This repository contains Vue/Vite and Nest API applications, Google login, and bounded protected speech endpoints; it is **not complete or production-ready**. Local STT and Piper runtimes start with the API when their local configuration is valid. The OpenAI coach remains opt-in and is called only on an explicit practice-turn request.
 
 ## Development
 
 Use a current Node.js version compatible with the source project (`^20.19.0 || >=22.12.0`) and pnpm.
+
+### Windows local development (database in Docker)
+
+The supported local workflow keeps **only PostgreSQL in Docker**. It uses a fresh, isolated `lingualoop-local-dev-postgres-data` volume and publishes the database on `127.0.0.1:5544`; it does not reuse or alter the historical Compose database/volume. Copy `.env.example` to the ignored root `.env`, set the local password-file path, signing key and FFmpeg path, then run these commands from the repository root in separate terminals:
+
+```powershell
+docker compose --env-file .env -p lingualoop-local-dev -f compose.local-db.yml up -d postgres
+cd api; pnpm install; pnpm build; pnpm migrate; pnpm dev
+cd web; pnpm install; pnpm dev
+```
+
+The API's `dev`, `start`, and `migrate` scripts load `../.env` explicitly. Vite serves `http://localhost:5001` and proxies `/api` to the local API on port `5000`. Stop PostgreSQL with `docker compose --env-file .env -p lingualoop-local-dev -f compose.local-db.yml stop`; keep its named volume to preserve local data.
+
+The native Windows install uses NVIDIA NeMo-Speech.cpp with the multilingual `nemotron-3.5` model and Piper voices for English and Spanish. Install/download models once; thereafter, starting the API starts both local speech runtimes, and shutting it down stops the runtimes it owns. STT binds only to loopback and transcription runs only when an authenticated audio endpoint is called; Piper voices load at API start, while synthesis runs only on a TTS request:
+
+```powershell
+.\scripts\Install-SttModel.ps1
+.\scripts\Start-Stt.ps1
+.\scripts\Stop-Stt.ps1
+```
+
+The API validates STT as loopback-only and uses FFmpeg locally to normalize browser audio to WAV. The NeMo model, Piper voices and runtimes are stored under the user's local app-data folders, not in Git. `Start-Stt.ps1` and `Stop-Stt.ps1` remain available for standalone STT operation when the API is not running.
+
+The OpenAI coach is **disabled by default** (`LINGUALOOP_OPENAI_COACH_ENABLED=false`). Enabling it only makes the coach available; the API client/key are initialized lazily and a request is sent only when a user submits a practice turn. API usage is billed separately from ChatGPT.
+
+Do not combine `compose.local-db.yml` with the historical app stack when using this flow. The `compose.roles-*.yml` files remain a separate integration environment.
 
 ```sh
 cd api && pnpm install && LINGUALOOP_DB_PASSWORD_FILE=/absolute/path/to/password LINGUALOOP_TOKEN_SIGNING_KEY_FILE=/absolute/path/to/token-signing-key PORT=5000 pnpm dev

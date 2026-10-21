@@ -10,11 +10,11 @@ type PracticeSceneDetails = {
 };
 
 const scenes: Record<SceneTopic, PracticeSceneDetails> = {
-  travel: { topic: 'travel', label: 'Travel conversation scene', image: '/images/scenes/travel-scene.svg' },
-  work: { topic: 'work', label: 'Work conversation scene', image: '/images/scenes/work-scene.svg' },
-  studies: { topic: 'studies', label: 'Study conversation scene', image: '/images/scenes/studies-scene.svg' },
+  travel: { topic: 'travel', label: 'Travel conversation scene', image: '/images/scenes/travel-scene.webp' },
+  work: { topic: 'work', label: 'Work conversation scene', image: '/images/scenes/work-scene.webp' },
+  studies: { topic: 'studies', label: 'Study conversation scene', image: '/images/scenes/studies-scene.webp' },
   'everyday-conversation': {
-    topic: 'everyday-conversation', label: 'Everyday conversation scene', image: '/images/scenes/everyday-conversation-scene.svg',
+    topic: 'everyday-conversation', label: 'Everyday conversation scene', image: '/images/scenes/everyday-conversation-scene.webp',
   },
 };
 

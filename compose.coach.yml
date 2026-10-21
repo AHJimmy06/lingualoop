@@ -1,6 +1,7 @@
 services:
   api:
     environment:
+      LINGUALOOP_OPENAI_COACH_ENABLED: "true"
       LINGUALOOP_OPENAI_API_KEY_FILE: /run/secrets/lingualoop_openai_api_key
       LANGUAGE_PRACTICE_OPENAI_MODEL: ${LANGUAGE_PRACTICE_OPENAI_MODEL:?Set LANGUAGE_PRACTICE_OPENAI_MODEL to an allowed coach model}
     secrets:

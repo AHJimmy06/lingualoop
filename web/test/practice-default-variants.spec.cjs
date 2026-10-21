@@ -41,7 +41,7 @@ test('catalogue details display recorded difficulty without inventing historical
     assert.ok(html.includes(label));
   }
 });
-test('settings draft changes difficulty without changing CEFR or time, saves only defaults', () => {
+test('settings draft changes CEFR and time without controlling card difficulty', () => {
   const { PracticeSettingsDialog } = require('../src/features/language-practice/PracticeSettingsDialog.tsx');
   const original = React.useState;
   const states = []; let cursor = 0; let saved;
@@ -57,13 +57,16 @@ test('settings draft changes difficulty without changing CEFR or time, saves onl
     let tree = render();
     tree.props.onOpenChange(true);
     tree = render();
-    nodes(tree).filter(node => node.type === 'select')[2].props.onChange({ target: { value: 'hard' } });
+    nodes(tree).filter(node => node.type === 'select')[0].props.onChange({ target: { value: 'B1' } });
     tree = render();
-    assert.deepEqual(nodes(tree).filter(node => node.type === 'select').map(node => node.props.value), ['A1', 5, 'hard']);
+    nodes(tree).filter(node => node.type === 'select')[1].props.onChange({ target: { value: '10' } });
+    tree = render();
+    assert.deepEqual(nodes(tree).filter(node => node.type === 'select').map(node => node.props.value), ['B1', 10]);
     nodes(tree).find(node => node.type === 'form').props.onSubmit({ preventDefault() {} });
-    assert.deepEqual(saved, { ...value, difficulty: 'hard' });
+    assert.deepEqual(saved, { ...value, level: 'B1', durationMinutes: 10 });
     tree.props.onOpenChange(true);
-    assert.deepEqual(nodes(render()).filter(node => node.type === 'select').map(node => node.props.value), ['A1', 5, 'medium']);
+    assert.deepEqual(nodes(render()).filter(node => node.type === 'select').map(node => node.props.value), ['A1', 5]);
+    assert.doesNotMatch(fs.readFileSync(require.resolve('../src/features/language-practice/PracticeSettingsDialog.tsx'), 'utf8'), /Task difficulty/);
   } finally { React.useState = original; }
 });
 test('normalizing remote options preserves local difficulty and custom start never sends overrides', () => {

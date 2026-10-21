@@ -125,16 +125,16 @@ test('challenge confirms fixed requirements before exact custom start and retain
     let tree = h.render();
     assert.deepEqual(calls, []);
     tree.props.onOpenChange(true); tree = h.render();
-    assert.match(text(tree), /Review the requirements before starting/);
+    assert.match(text(tree), /fixed settings and conversation requirements/);
     const details = find(tree, node => node.props?.practice === practice);
     assert.equal(details.props.practice.setup.level, 'C1');
-    const start = find(tree, node => text(node) === 'Start teacher practice');
+    const start = find(tree, node => text(node) === 'Start practice');
     start.props.onClick(); start.props.onClick();
     assert.deepEqual(calls, [{ practiceId: id }]);
     pending.reject(Error('private diagnostic')); await new Promise(done => setImmediate(done));
     assert.match(text(h.render()), /session was not confirmed/);
     assert.doesNotMatch(text(h.render()), /private diagnostic/);
-    assert.equal(find(h.render(), node => text(node) === 'Start teacher practice').props.disabled, false);
+    assert.equal(find(h.render(), node => text(node) === 'Start practice').props.disabled, false);
   } finally { h.restore(); LanguagePracticeClient.prototype.createCustomSession = original; }
 });
 test('held custom start locks the parent in both directions, recovers on failure and ignores late unmounted completion', async () => {
@@ -168,18 +168,20 @@ test('held custom start locks the parent in both directions, recovers on failure
   function assertControls(tree, disabled) {
     assert.equal(find(tree, node => node.type === DefaultTopicTiles).props.disabled, disabled);
     assert.equal(find(tree, node => node.type === PracticeSettingsDialog).props.disabled, disabled);
-    assert.equal(find(tree, node => text(node) === 'Start practice').props.disabled, disabled);
     assert.equal(find(tree, node => node.type === PracticeCatalogue).props.disabled, disabled);
   }
   try {
-    parentTree(); await parent.effects(); parentTree();
+    parentTree(); await parent.effects();
+    find(parentTree(), node => node.type === DefaultTopicTiles).props.onSelect('work', 'easy');
+    parentTree();
     catalogue.render(); await catalogue.effects();
     const cards = find(catalogue.render(), node => node.type === PracticeCards);
     card = React.Children.toArray(PracticeCards(cards.props).props.children)[0]; cardProps = card.props;
     child = harness(() => card.type(cardProps));
     let tree = child.render(); await child.effects();
     const staleDefault = find(parentTree(), node => text(node) === 'Start practice');
-    const staleCustom = find(tree, node => text(node) === 'Start teacher practice');
+    tree.props.onOpenChange(true); tree = child.render();
+    const staleCustom = find(tree, node => text(node) === 'Start practice');
     staleCustom.props.onClick(); staleCustom.props.onClick(); staleDefault.props.onClick();
     assert.equal(customRequests.length, 1);
     assert.equal(defaultRequests.length, 0, 'a held custom POST must prevent default admission');
@@ -193,10 +195,10 @@ test('held custom start locks the parent in both directions, recovers on failure
     assert.equal(defaultRequests.length, 1);
     assert.equal(customRequests.length, 1, 'a held default POST must prevent stale custom admission');
     parentTree(); tree = cardTree();
-    assert.equal(find(tree, node => text(node) === 'Start teacher practice').props.disabled, true);
+    assertControls(parentTree(), true);
     defaultRequests[0].reject(Error('not confirmed')); await new Promise(done => setImmediate(done));
     assertControls(parentTree(), false); tree = cardTree();
-    find(tree, node => text(node) === 'Start teacher practice').props.onClick();
+    find(tree, node => text(node) === 'Start practice').props.onClick();
     assertControls(parentTree(), true);
     child.unmount();
     assertControls(parentTree(), true);
@@ -394,6 +396,7 @@ test('shared report renders exact evidence and empty states without student-muta
   const report = { sessionId: id, summary: '<script>Summary</script>', corrections: [], strengths: [], recommendations: [], generatedWithAi: true, createdAt: date, parameterCoverage: [{ parameterId: id, requirement: 'Ask directions', status: 'unassessed', evidenceSequences: [], explanation: 'Insufficient evidence' }] };
   const html = renderToStaticMarkup(React.createElement(PracticeReportContent, { report }));
   for (const phrase of ['Performance summary', 'No evidence-backed corrections', 'Observed strengths', 'Next practice', 'Not assessed', 'Insufficient evidence', '&lt;script&gt;']) assert.ok(html.includes(phrase), phrase);
-  assert.doesNotMatch(html, /<button|href=|<script>/);
-  for (const file of ['../src/features/teacher/TeacherResultsView.tsx', '../src/features/language-practice/PracticeReportView.tsx']) assert.match(fs.readFileSync(path.join(__dirname, file), 'utf8'), /<PracticeReportContent report=\{report\} \/>/);
+  assert.doesNotMatch(html, /Finish practice|Start recording|Start practice|<script>/);
+  assert.match(fs.readFileSync(path.join(__dirname, '../src/features/teacher/TeacherResultsView.tsx'), 'utf8'), /<PracticeReportContent report=\{report\} \/>/);
+  assert.match(fs.readFileSync(path.join(__dirname, '../src/features/language-practice/PracticeReportView.tsx'), 'utf8'), /<PracticeReportContent report=\{report\} session=\{session\} turnsUnavailable=\{turnsUnavailable\}[\s\S]*learningSupport=\{learningSupport\}/);
 });

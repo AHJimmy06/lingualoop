@@ -44,8 +44,8 @@ export function AdminAccountsView() {
   return <main className="authenticated-page">
     <RoleHeader title="Accounts" description="Create teacher and student accounts. There is no public signup." />
     <div className="grid min-w-0 items-start gap-6 lg:grid-cols-[minmax(0,24rem)_minmax(0,1fr)]">
-      <form onSubmit={event => void submit(event)} className="grid min-w-0 gap-4 rounded-xl border bg-card p-4 [overflow-wrap:anywhere] sm:p-6" aria-label="Create account">
-        <h2 className="text-lg font-semibold">Create an account</h2>
+      <form onSubmit={event => void submit(event)} className="grid min-w-0 gap-4 rounded-2xl border border-white/80 bg-white/90 p-4 shadow-lg shadow-slate-900/5 backdrop-blur [overflow-wrap:anywhere] sm:p-6" aria-label="Create account">
+        <h2 className="text-xl font-semibold tracking-tight text-slate-900">Create an account</h2>
         <label className="grid min-w-0 gap-2 text-sm">Name<input className="min-w-0 rounded-md border bg-background p-3" required maxLength={120} autoComplete="off" value={name} disabled={busy} onChange={event => setName(event.target.value)} /></label>
         <label className="grid min-w-0 gap-2 text-sm">Email<input className="min-w-0 rounded-md border bg-background p-3" type="email" required maxLength={254} value={email} disabled={busy} onChange={event => setEmail(event.target.value)} /></label>
         <label className="grid min-w-0 gap-2 text-sm">Initial password<input className="min-w-0 rounded-md border bg-background p-3" type="password" required minLength={8} maxLength={128} autoComplete="new-password" value={password} disabled={busy} onChange={event => setPassword(event.target.value)} /><span className="text-muted-foreground">8–128 characters. Share privately with the account owner.</span></label>
@@ -53,8 +53,8 @@ export function AdminAccountsView() {
         <Button type="submit" disabled={!valid || busy}>{busy ? 'Creating…' : 'Create account'}</Button>
         {error && <p role="alert">{error}</p>}{message && <p role="status">{message}</p>}
       </form>
-      <section className="min-w-0 rounded-xl border bg-card p-4 [overflow-wrap:anywhere] sm:p-6" aria-labelledby="accounts-title">
-        <h2 id="accounts-title" className="text-lg font-semibold">Accounts list</h2>
+      <section className="min-w-0 rounded-2xl border border-white/80 bg-white/90 p-4 shadow-lg shadow-slate-900/5 backdrop-blur [overflow-wrap:anywhere] sm:p-6" aria-labelledby="accounts-title">
+        <h2 id="accounts-title" className="text-xl font-semibold tracking-tight text-slate-900">Accounts list</h2>
         {listError ? <div role="alert"><p>{listError}</p><Button variant="outline" onClick={() => setAttempt(value => value + 1)}>Try again</Button></div> : accounts === null ? <p role="status">Loading accounts…</p> : accounts.length === 0 ? <p>No teacher or student accounts have been created yet.</p> :
           <ul className="mt-4 grid gap-3">{accounts.map(account => <li key={account.id} className="min-w-0 rounded-lg border p-3 [overflow-wrap:anywhere]"><p className="font-medium">{account.name}</p><p>{account.email}</p><p className="text-sm text-muted-foreground">{account.role} · Created {new Date(account.createdAt).toLocaleDateString()}</p></li>)}</ul>}
       </section>

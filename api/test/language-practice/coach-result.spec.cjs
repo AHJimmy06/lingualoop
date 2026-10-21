@@ -44,6 +44,17 @@ test('accepts an explicit no-change explanation', () => {
   assert.equal(result.correctedPhrase, 'Me gusta el café.');
 });
 
+test('natural short replies accept affirmative Spanish no-change feedback without fabricated corrections', () => {
+  for (const feedback of ['La frase es correcta y natural.', 'Tu respuesta es correcta.', 'No fue necesaria ninguna corrección.']) {
+    const result = parseCoachResult(JSON.stringify({
+      correctedPhrase: 'Hola.', feedback,
+      assistantResponse: 'Hello! It is nice to meet you. Are you planning a trip?',
+    }), 'Hello.');
+    assert.equal(result.feedback, feedback);
+  }
+  rejectsWithCode(output({ correctedPhrase: 'Hola.', feedback: 'La frase no es correcta.' }), 'correction_change_not_identified', 'Hello.');
+});
+
 test('rejects missing and extra keys', () => {
   const base = { correctedPhrase: 'Ayer fui al parque.', feedback: "El verbo 'voy' cambia a 'fui' en pasado.", assistantResponse: 'That sounds nice. The park was peaceful. Did you enjoy it?' };
   const missing = { ...base };

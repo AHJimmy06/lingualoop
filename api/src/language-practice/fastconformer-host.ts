@@ -61,6 +61,11 @@ const DIAGNOSTICS = {
   request_invalid_path: ['request', 'Invalid absolute audio path'],
   request_busy: ['request', 'FastConformer request already in flight'],
   request_cancelled: ['request', 'FastConformer transcription cancelled'],
+  nemo_request_path: ['request', 'Invalid local speech request'],
+  nemo_request_process: ['request', 'Local NeMo Speech service is unavailable'],
+  nemo_response_invalid: ['request', 'Local NeMo Speech service returned an invalid response'],
+  nemo_response_oversized: ['request', 'Local NeMo Speech response exceeded its limit'],
+  nemo_no_speech: ['request', 'No speech was recognized.'],
   host_stopped: ['lifecycle', 'FastConformer host is stopped or closed'],
   no_speech: ['request', 'No speech was recognized.'],
   preparation_input: ['preparation', 'Audio preparation failed'],
@@ -76,7 +81,7 @@ const DIAGNOSTICS = {
 export type SttDiagnosticCode = keyof typeof DIAGNOSTICS
 export type SttDiagnostic = {
   code: SttDiagnosticCode
-  component: 'fastconformer' | 'audio_preparation'
+  component: 'fastconformer' | 'nemo_speech' | 'audio_preparation'
   phase: 'startup' | 'request' | 'lifecycle' | 'preparation'
 }
 // Private provenance prevents forged or mutated public error properties entering logs.
@@ -86,7 +91,8 @@ export class SttDiagnosticError extends Error {
     const entry = Object.prototype.hasOwnProperty.call(DIAGNOSTICS, code) ? DIAGNOSTICS[code] : undefined
     super(entry ? entry[1] : 'STT failed')
     if (entry) trustedDiagnostics.set(this, {
-      code, component: code.startsWith('preparation_') ? 'audio_preparation' : 'fastconformer', phase: entry[0],
+      code, component: code.startsWith('preparation_') ? 'audio_preparation' :
+        code.startsWith('nemo_') ? 'nemo_speech' : 'fastconformer', phase: entry[0],
     })
   }
 }

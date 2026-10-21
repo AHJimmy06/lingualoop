@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, HttpCode, HttpException, Inject, Param, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, HttpCode, HttpException, Inject, Optional, Param, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { ConfiguredVerifiedRequestGuard } from '../auth/google-auth.providers';
 import { RoleGuard, Roles } from '../auth/role.guard';
 import {
@@ -13,12 +13,14 @@ import {
   LANGUAGE_PRACTICE_REPORT_SERVICE,
   LANGUAGE_PRACTICE_SESSION_STORE,
   LANGUAGE_PRACTICE_TURN_STORE,
+  REPORT_LEARNING_SUPPORT_SERVICE,
 } from './language-practice-session.providers';
 import { LanguagePracticeReportAdmissionError } from './language-practice-report-store';
 import { LanguagePracticeReportService } from './language-practice-report.service';
 import { LanguagePracticeTurnStore } from './language-practice-turn-store';
 import type { LanguagePracticeSetup } from './language-practice-session-store';
 import { PRACTICE_TOPIC_LABELS } from './practice-topic-labels';
+import { ReportLearningSupportService } from './report-learning-support.service';
 
 const INPUT_LANGUAGE = { code: 'en', label: 'English' };
 const OUTPUT_LANGUAGES = [
@@ -47,7 +49,53 @@ export class LanguagePracticeSessionController {
     @Inject(LANGUAGE_PRACTICE_SESSION_STORE) private readonly sessions: SessionStore,
     @Inject(LANGUAGE_PRACTICE_TURN_STORE) private readonly turns: TurnStore,
     @Inject(LANGUAGE_PRACTICE_REPORT_SERVICE) private readonly reports: ReportService,
+    @Optional() @Inject(REPORT_LEARNING_SUPPORT_SERVICE) private readonly learningSupport?: Pick<ReportLearningSupportService, 'getCached' | 'getOrCreate'>,
   ) {}
+
+  @Get('sessions/:sessionId/report/learning-support')
+  async getReportLearningSupport(
+    @Param('sessionId') sessionId: string,
+    @Req() request: VerifiedRequest,
+    @Res({ passthrough: true }) response: { setHeader(name: string, value: string): void; status(code: number): unknown },
+  ) {
+    response.setHeader('Cache-Control', 'private, no-store');
+    const ownerId = this.supportOwner(sessionId, request);
+    try {
+      if (!this.learningSupport) throw new Error();
+      const value = await this.learningSupport.getCached(ownerId, sessionId);
+      if (value === null) { response.status(204); return; }
+      return value;
+    } catch (error) { this.supportFailure(error); }
+  }
+
+  @Post('sessions/:sessionId/report/learning-support')
+  @HttpCode(200)
+  async createReportLearningSupport(
+    @Param('sessionId') sessionId: string,
+    @Req() request: VerifiedRequest,
+    @Res({ passthrough: true }) response: { setHeader(name: string, value: string): void },
+  ) {
+    response.setHeader('Cache-Control', 'private, no-store');
+    const ownerId = this.supportOwner(sessionId, request);
+    try {
+      if (!this.learningSupport) throw new Error();
+      return await this.learningSupport.getOrCreate(ownerId, sessionId);
+    } catch (error) { this.supportFailure(error); }
+  }
+
+  private supportOwner(sessionId: string, request: VerifiedRequest): string {
+    if (!UUID_PATTERN.test(sessionId)) throw new HttpException('Invalid session identifier.', 400);
+    if (typeof request.verifiedIdentity?.ownerId !== 'string') throw new HttpException('Authentication service unavailable.', 503);
+    return request.verifiedIdentity.ownerId;
+  }
+
+  private supportFailure(error: unknown): never {
+    if (error instanceof LanguagePracticeReportAdmissionError) {
+      if (error.reason === 'not_found') throw new HttpException('Not found.', 404);
+      if (error.reason === 'not_closed') throw new HttpException('Session report is not ready.', 409);
+    }
+    throw new HttpException('Report learning support is unavailable.', 503);
+  }
 
   @Get('options')
   getOptions() {
@@ -157,5 +205,19 @@ export class LanguagePracticeSessionController {
       throw new HttpException('Language practice session is unavailable.', 503);
     }
     return { ...session, turns };
+  }
+
+  @Get('sessions/:sessionId/turns')
+  async getSessionTurns(@Param('sessionId') sessionId: string, @Req() request: VerifiedRequest) {
+    if (!UUID_PATTERN.test(sessionId)) throw new HttpException('Invalid session identifier.', 400);
+    const ownerId = request.verifiedIdentity?.ownerId;
+    if (typeof ownerId !== 'string') throw new HttpException('Authentication service unavailable.', 503);
+    try {
+      if (!(await this.sessions.getSession(ownerId, sessionId))) throw new HttpException('Not found.', 404);
+      return await this.turns.listCompletedTurns(ownerId, sessionId);
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      throw new HttpException('Language practice session is unavailable.', 503);
+    }
   }
 }

@@ -8,6 +8,7 @@ import {
 } from './practice-recorder-guards';
 import { RecordingBuffer } from './react-recorder-state';
 import { SpeakingEventState } from './react-live-audio';
+import { monitorRecordingSilence, type RecordingSilenceMonitor } from './recording-silence';
 
 type PracticeRecorderProps = {
   disabled?: boolean;
@@ -23,6 +24,8 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, o
   const [starting, setStarting] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState('');
+  const [automaticStop, setAutomaticStop] = useState(false);
+  const silenceMonitorRef = useRef<RecordingSilenceMonitor | null>(null);
   const operationRef = useRef(0);
   const startingRef = useRef(false);
   const disabledRef = useRef(disabled);
@@ -38,6 +41,11 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, o
   const speakingDetachRef = useRef<(() => void) | null>(null);
   onRecordingChangeRef.current = onRecordingChange;
 
+  const stopSilenceMonitor = useCallback(() => {
+    silenceMonitorRef.current?.stop();
+    silenceMonitorRef.current = null;
+  }, []);
+
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) clearInterval(timerRef.current);
     timerRef.current = null;
@@ -52,6 +60,7 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, o
   const cancel = useCallback(() => {
     operationRef.current += 1;
     clearTimer();
+    stopSilenceMonitor();
     const recorder = recorderRef.current;
     recorderRef.current = null;
     if (recorder && recorder.state !== 'inactive') {
@@ -66,12 +75,13 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, o
     setStarting(false);
     setRecording(false);
     onBusyChange?.(false);
-  }, [clearTimer, onBusyChange, releaseTracks]);
+  }, [clearTimer, onBusyChange, releaseTracks, stopSilenceMonitor]);
 
   const stop = useCallback(() => {
     const recorder = recorderRef.current;
     if (!recorder || recorder.state === 'inactive') return;
     clearTimer();
+    stopSilenceMonitor();
     requestedDurationRef.current = performance.now() - startedAtRef.current;
     try {
       recorder.stop();
@@ -81,13 +91,14 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, o
       return;
     }
     releaseTracks();
-  }, [cancel, clearTimer, releaseTracks]);
+  }, [cancel, clearTimer, releaseTracks, stopSilenceMonitor]);
 
   const start = useCallback(async () => {
     if (disabledRef.current || startingRef.current || recording || disposedRef.current) return;
     startingRef.current = true;
     onBusyChange?.(true);
     setError('');
+    setAutomaticStop(false);
     setElapsedMs(0);
     requestedDurationRef.current = null;
     setStarting(true);
@@ -117,6 +128,7 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, o
       recorder.addEventListener('stop', () => {
         if (operation !== operationRef.current || disposedRef.current) return;
         clearTimer();
+        stopSilenceMonitor();
         speakingDetachRef.current?.();
         speakingDetachRef.current = null;
         const duration = requestedDurationRef.current ?? performance.now() - startedAtRef.current;
@@ -137,6 +149,13 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, o
       recorder.start();
       startedAtRef.current = performance.now();
       setRecording(true);
+      const monitor = monitorRecordingSilence(acquiredStream, () => {
+        if (operation === operationRef.current && !disposedRef.current && !disabledRef.current) stop();
+      });
+      silenceMonitorRef.current = monitor;
+      if (monitor) void monitor.ready.then(available => {
+        if (operation === operationRef.current && !disposedRef.current && recorderRef.current === recorder) setAutomaticStop(available);
+      });
       timerRef.current = setInterval(() => {
         const elapsed = Math.min(performance.now() - startedAtRef.current, MAX_RECORDING_MS);
         setElapsedMs(elapsed);
@@ -155,7 +174,7 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, o
         if (!recorderRef.current) onBusyChange?.(false);
       }
     }
-  }, [cancel, disabled, onBusyChange, onRecorded, recording, starting, stop, clearTimer, releaseTracks]);
+  }, [cancel, disabled, onBusyChange, onRecorded, recording, starting, stop, clearTimer, releaseTracks, stopSilenceMonitor]);
 
   useEffect(() => {
     if (!disabled) return;
@@ -200,6 +219,9 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, o
       {(starting || recording) && <p className="text-sm text-muted-foreground" role="status" aria-live="polite">
         {recording ? `Recording… ${formatRecordingTime(elapsedMs)} / 0:20` : 'Starting…'}
       </p>}
+      {recording && <p className="max-w-md text-xs leading-5 text-muted-foreground">{automaticStop
+        ? 'After you speak, about 2 seconds of silence will send your turn. You choose when to start the next one.'
+        : 'Silence detection is unavailable. Use Stop recording to send this turn.'}</p>}
       {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
     </div>
   );

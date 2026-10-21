@@ -213,7 +213,7 @@ export function LivePracticeView() {
       }
       if (response.session.status === 'EXPIRED' || response.session.status === 'COMPLETED') navigateToCompletion(requestedSessionId);
     } else if (result.kind === 'uncertain') {
-      setTurnStatus('We could not confirm your response yet. Check again before recording another.');
+      setTurnStatus('');
       if (result.cause instanceof LanguagePracticeClientError && result.cause.kind === 'unauthenticated') {
         setError('Please sign in, then check again to retrieve your response.');
       }
@@ -269,7 +269,7 @@ export function LivePracticeView() {
   };
 
   return (
-    <main className="authenticated-page min-h-svh [overflow-wrap:anywhere] lg:flex lg:flex-col" aria-labelledby="session-title">
+    <main className="authenticated-page min-h-svh [overflow-wrap:anywhere] md:flex md:flex-col" aria-labelledby="session-title">
       <header className="mb-6 flex items-start justify-between gap-3 sm:mb-8">
         <div>
           <p className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-primary">Timed English practice</p>
@@ -294,8 +294,8 @@ export function LivePracticeView() {
           <p><strong>Task difficulty</strong> <span className="text-muted-foreground">{difficultyLabel(session.difficulty)}</span></p>
         </section>
 
-        <div className="grid grid-cols-1 items-start gap-4 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:grid-rows-[auto_auto_1fr] lg:gap-x-6">
-        <div className="min-w-0 [&>section]:mb-0 lg:col-start-1 lg:row-start-1 lg:row-span-3 lg:self-center">
+        <div className="grid grid-cols-1 items-start gap-4 md:flex-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:grid-rows-[auto_auto_1fr] md:gap-x-6">
+        <div className="min-w-0 [&>section]:mb-0 md:col-start-1 md:row-start-1 md:row-span-3 md:self-center">
         <PracticeScene
           topic={session.topic}
           learnerState={learnerSpeaking ? 'speaking' : partnerSpeaking ? 'listening' : 'idle'}
@@ -303,11 +303,11 @@ export function LivePracticeView() {
         />
         </div>
 
-        <section aria-labelledby="conversation-title" className="min-w-0 lg:col-start-2 lg:row-start-1">
-          <h2 id="conversation-title" className="mb-4 text-lg font-semibold">Conversation so far</h2>
+        <section aria-labelledby="conversation-title" className="flex h-[clamp(18rem,45svh,32rem)] min-h-0 min-w-0 flex-col rounded-2xl border bg-card/90 p-4 shadow-sm md:col-start-2 md:row-start-1">
+          <h2 id="conversation-title" className="mb-4 shrink-0 text-lg font-semibold">Conversation so far</h2>
           {session.turns.length === 0
             ? <p className="py-3 text-sm text-muted-foreground">Your completed conversation turns will appear here.</p>
-            : <ol className="grid gap-5">
+            : <ol tabIndex={0} aria-label="Conversation history" className="grid min-h-0 flex-1 content-start gap-5 overflow-y-auto overscroll-contain pr-2">
               {session.turns.map((turn, index) => <li key={turn.sequence} className="min-w-0">
                 <p className="mb-3 text-xs font-medium text-muted-foreground">Turn {turn.sequence}</p>
                 <MessageGroup className="gap-3">
@@ -322,24 +322,21 @@ export function LivePracticeView() {
             </ol>}
         </section>
 
-        <section className="grid min-w-0 justify-items-center gap-4 border-t py-6 lg:col-start-2 lg:row-start-2" aria-label="Voice turn controls">
-          {turnController.pending
-            ? <p className="max-w-md text-center text-sm leading-6 text-muted-foreground">Your response is being prepared. You can check again shortly; no new recording is needed.</p>
-            : <p className="max-w-md text-center text-sm leading-6 text-muted-foreground">{active
+        <section className="grid min-w-0 justify-items-center gap-4 border-t py-6 md:col-start-2 md:row-start-2" aria-label="Voice turn controls">
+          {!turnController.pending && <p className="max-w-md text-center text-sm leading-6 text-muted-foreground">{active
               ? 'When you are ready, record your response.'
               : 'This session has expired. You can no longer record a new turn.'}</p>}
           {!turnController.pending && <PracticeRecorder key={sessionId} disabled={!active} onRecorded={onRecorded} onBusyChange={onRecorderBusyChange} onRecordingChange={onRecordingChange} />}
           {turnController.pending && <Button type="button" variant="outline" disabled={submitting} onClick={() => void checkSameTurn(false)}>
             {submitting ? 'Checking…' : 'Check for response'}
           </Button>}
-          {turnStatus && <p className="max-w-lg text-center text-sm text-muted-foreground" role="status">{turnStatus}</p>}
-          {turnController.pending && remainingMs === 0 && <p className="max-w-lg text-center text-sm text-muted-foreground" role="status">Time is up, but your response is still being prepared. Check again when ready.</p>}
+          {turnStatus && !turnController.pending && <p className="max-w-lg text-center text-sm text-muted-foreground" role="status">{turnStatus}</p>}
           {audioUrl && <>
             <audio ref={audioElement} src={audioUrl} preload="none" hidden />
             {playbackError && <p className="text-center text-sm text-muted-foreground" role="status">{playbackError}</p>}
           </>}
         </section>
-        <div className="min-w-0 lg:col-start-2 lg:row-start-3">
+        <div className="min-w-0 md:col-start-2 md:row-start-3">
         {error && <p className="mb-4 text-sm text-destructive" role="alert">{error}</p>}
         <div className="flex flex-wrap gap-3">
           <Button type="button" variant="outline" disabled={refreshing || turnController.pending !== null} onClick={() => void loadSession()}>

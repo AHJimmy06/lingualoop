@@ -15,6 +15,11 @@ const MAX_UPLOAD_BYTES = 2 * 1024 * 1024
 const MAX_RESPONSE_AUDIO_BYTES = 8 * 1024 * 1024
 const MAX_COMPLETED_TURNS = 256
 const MAX_DETAIL_TEXT_LENGTH = 2000
+// React StrictMode may run the report-loading effect twice in development. Share the
+// same POST while it is pending so the API's durable generation claim is not mistaken
+// for a report failure by the second mount.
+const pendingReportRequests = new Map<string, Promise<LanguagePracticeReport>>()
+const pendingSupportRequests = new Map<string, Promise<ReportLearningSupport>>()
 // The immediate turn response keeps the coach's 4,000-character transcript; session history is clipped to 2,000.
 const MAX_TURN_TRANSCRIPT_LENGTH = 4000
 const ACCEPTED_AUDIO_TYPES = new Set([
@@ -84,6 +89,36 @@ export type LanguagePracticeReport = {
   recommendations: string[]
   generatedWithAi: boolean
   createdAt: string
+}
+
+export type ReportLearningNote = { textEn: string; textEs: string; evidenceSequences: number[] }
+export type ReportLearningSupport = {
+  corrections: { sequence: number; suggestedEnglish: string; translationEs: string; explanationEn: string; explanationEs: string }[]
+  strengths: ReportLearningNote[]
+  recommendations: ReportLearningNote[]
+}
+
+export function parseReportLearningSupport(value: unknown): ReportLearningSupport {
+  if (!isRecord(value) || !hasExactKeys(value, ['corrections', 'strengths', 'recommendations']) ||
+      !Array.isArray(value.corrections) || value.corrections.length > 20) throw new LanguagePracticeClientError('invalid-response')
+  const corrections = value.corrections.map(item => {
+    if (!isRecord(item) || !hasExactKeys(item, ['sequence', 'suggestedEnglish', 'translationEs', 'explanationEn', 'explanationEs']) ||
+        !Number.isSafeInteger(item.sequence) || (item.sequence as number) < 1 ||
+        !boundedText(item.suggestedEnglish, 500) || !boundedText(item.translationEs, 500) ||
+        !boundedText(item.explanationEn, 500) || !boundedText(item.explanationEs, 500)) throw new LanguagePracticeClientError('invalid-response')
+    return { sequence: item.sequence as number, suggestedEnglish: item.suggestedEnglish, translationEs: item.translationEs, explanationEn: item.explanationEn, explanationEs: item.explanationEs }
+  })
+  if (new Set(corrections.map(item => item.sequence)).size !== corrections.length) throw new LanguagePracticeClientError('invalid-response')
+  const notes = (items: unknown): ReportLearningNote[] => {
+    if (!Array.isArray(items) || items.length > 3) throw new LanguagePracticeClientError('invalid-response')
+    return items.map(item => {
+      if (!isRecord(item) || !hasExactKeys(item, ['textEn', 'textEs', 'evidenceSequences']) ||
+          !boundedText(item.textEn, 500) || !boundedText(item.textEs, 500) || !Array.isArray(item.evidenceSequences) || item.evidenceSequences.length > 256 ||
+          item.evidenceSequences.some(seq => !Number.isSafeInteger(seq) || seq < 1) || new Set(item.evidenceSequences).size !== item.evidenceSequences.length) throw new LanguagePracticeClientError('invalid-response')
+      return { textEn: item.textEn, textEs: item.textEs, evidenceSequences: item.evidenceSequences as number[] }
+    })
+  }
+  return { corrections, strengths: notes(value.strengths), recommendations: notes(value.recommendations) }
 }
 
 export type LanguagePracticeClientErrorKind =
@@ -379,10 +414,40 @@ export class LanguagePracticeClient {
     return parseFinish(await this.readJson(response), sessionId)
   }
 
-  async getOrCreateReport(sessionId: string): Promise<LanguagePracticeReport> {
+  getOrCreateReport(sessionId: string): Promise<LanguagePracticeReport> {
     this.validateUuid(sessionId)
-    const response = await this.post(`/api/language-practice/sessions/${sessionId}/report`, {})
-    return parseReport(await this.readJson(response), sessionId)
+    const pending = pendingReportRequests.get(sessionId)
+    if (pending) return pending
+
+    const request = this.post(`/api/language-practice/sessions/${sessionId}/report`, {})
+      .then(async response => parseReport(await this.readJson(response), sessionId))
+    pendingReportRequests.set(sessionId, request)
+    const clear = () => {
+      if (pendingReportRequests.get(sessionId) === request) pendingReportRequests.delete(sessionId)
+    }
+    void request.then(clear, clear)
+    return request
+  }
+
+  async getCachedReportLearningSupport(sessionId: string): Promise<ReportLearningSupport | null> {
+    this.validateUuid(sessionId)
+    const response = await this.session.getWithRefresh(`/api/language-practice/sessions/${sessionId}/report/learning-support`)
+    if (!response) throw new LanguagePracticeClientError('unavailable')
+    if (response.status === 204) return null
+    if (!response.ok) throw responseError(response.status)
+    return parseReportLearningSupport(await this.readJson(response))
+  }
+
+  prepareReportLearningSupport(sessionId: string): Promise<ReportLearningSupport> {
+    this.validateUuid(sessionId)
+    const pending = pendingSupportRequests.get(sessionId)
+    if (pending) return pending
+    const request = this.post(`/api/language-practice/sessions/${sessionId}/report/learning-support`, {})
+      .then(async response => parseReportLearningSupport(await this.readJson(response)))
+    pendingSupportRequests.set(sessionId, request)
+    const clear = () => { if (pendingSupportRequests.get(sessionId) === request) pendingSupportRequests.delete(sessionId) }
+    void request.then(clear, clear)
+    return request
   }
 
   private async post(path: string, body: Record<string, unknown> | FormData): Promise<Response> {

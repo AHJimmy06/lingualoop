@@ -29,7 +29,7 @@ const turnsEnabled = hasTurnProvider(LANGUAGE_PRACTICE_TURN_COACH) && hasTurnPro
   controllers: [
     HealthController, PasswordAuthController, CurrentAccountController, AdminAccountsController,
     PracticeCatalogueController, LanguagePracticeSessionController,
-    ...(turnsEnabled ? [LanguagePracticeTurnController] : []),
+    LanguagePracticeTurnController,
     ...(practiceRuntimeConfiguration ? [PracticeAudioController] : []),
     ...(piperRuntimeConfiguration ? [PracticeSynthesisController] : []),
   ],
