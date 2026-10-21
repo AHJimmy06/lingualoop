@@ -1,5 +1,5 @@
-# Portainer Docker Standalone API stack. Start PostgreSQL first so its private
-# external network `lingualoop-postgres-net` exists. STT stays private in API.
+# Portainer Docker Standalone API stack. PostgreSQL is reached on the existing
+# proxy-network using its `postgres` network alias. STT stays private in API.
 name: lingualoop-api
 
 services:
@@ -11,6 +11,13 @@ services:
     environment:
       PORT: "5000"
       LINGUALOOP_WEB_ORIGIN: ${LINGUALOOP_WEB_ORIGIN:?Set the public web origin, e.g. https://your-domain}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      LINGUALOOP_GOOGLE_AUDIENCE: ${LINGUALOOP_GOOGLE_AUDIENCE:-}
+      GOOGLE_CALLBACK_URL: ${GOOGLE_CALLBACK_URL:-}
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
+      MICROSOFT_CALLBACK_URL: ${MICROSOFT_CALLBACK_URL:-}
       LINGUALOOP_DB_HOST: postgres
       LINGUALOOP_DB_PORT: "5432"
       LINGUALOOP_DB_PASSWORD_FILE: /run/secrets/pg_password
@@ -55,4 +62,4 @@ volumes:
 networks:
   lingualoop-postgres-net:
     external: true
-    name: lingualoop-postgres-net
+    name: proxy-network

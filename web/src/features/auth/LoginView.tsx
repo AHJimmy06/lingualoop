@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authSession, type LoginResult } from '../../auth-session';
 import { Button } from '../../components/ui/button';
@@ -19,7 +19,21 @@ export function LoginView({ status = '', logout = '' }: { status?: string; logou
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [providers, setProviders] = useState({ google: false, microsoft: false });
   const pending = useRef(false);
+  useEffect(() => {
+    let active = true;
+    void fetch('/api/auth/providers', { credentials: 'same-origin', cache: 'no-store' })
+      .then(response => response.ok ? response.json() : null)
+      .then(value => {
+        if (active && value && typeof value === 'object') setProviders({ google: value.google === true, microsoft: value.microsoft === true });
+      }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+  function startOAuth(provider: 'google' | 'microsoft') {
+    authSession.clearLocal();
+    window.location.assign(`/api/auth/${provider}`);
+  }
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (pending.current) return;
@@ -58,6 +72,7 @@ export function LoginView({ status = '', logout = '' }: { status?: string; logou
         <header className="mb-7 sm:mb-9"><p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-teal-700">Welcome back</p><h2 id="login-title" className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-[2.1rem]">Sign in</h2><p className="mt-2 text-sm leading-6 text-slate-600 sm:text-base">Continue to your LinguaLoop learning space.</p></header>
         {status === 'unavailable' && <p className="mb-4 rounded-lg border p-3 text-sm" role="status">We could not check your session. You can try signing in again.</p>}
         {status === 'forbidden' && <p className="mb-4 rounded-lg border p-3 text-sm" role="alert">Your account does not have an approved role. Contact your administrator.</p>}
+        {status === 'oauth-failed' && <p className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800" role="alert">We could not sign you in with that provider. Try again or use your email and password.</p>}
         {logout === 'unconfirmed' && <p className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" role="alert">The server did not confirm sign-out. Your local practice page was cleared, but the server session may still be active.</p>}
         <form onSubmit={event => void submit(event)} className="grid gap-5" aria-label="Sign in">
           <label className="grid gap-2 text-sm font-semibold text-slate-800">Email address<input className="h-12 rounded-xl border border-slate-200 bg-slate-50/70 px-4 text-base font-normal text-slate-950 shadow-sm transition placeholder:text-slate-400 hover:border-slate-300 focus-visible:border-teal-600 focus-visible:bg-white focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-600/10" type="email" autoComplete="username" placeholder="you@example.com" required maxLength={254} value={email} disabled={busy} onChange={event => setEmail(event.target.value)} /></label>
@@ -65,6 +80,13 @@ export function LoginView({ status = '', logout = '' }: { status?: string; logou
           {error && <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800" role="alert">{error}</p>}
           <Button size="lg" type="submit" disabled={busy} className="mt-1 h-12 rounded-xl bg-teal-700 text-base font-semibold shadow-[0_8px_20px_-8px_rgba(15,118,110,0.75)] transition hover:bg-teal-800">{busy ? 'Signing in…' : 'Sign in to LinguaLoop'}</Button>
         </form>
+        {(providers.google || providers.microsoft) && <>
+          <div className="my-6 flex items-center gap-3" aria-hidden="true"><span className="h-px flex-1 bg-slate-200" /><span className="text-[11px] font-medium uppercase tracking-widest text-slate-400">Or continue with</span><span className="h-px flex-1 bg-slate-200" /></div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {providers.google && <button type="button" onClick={() => startOAuth('google')} disabled={busy} className="inline-flex h-12 items-center justify-center gap-3 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-600/15 disabled:opacity-60" aria-label="Continue with Google"><svg aria-hidden="true" viewBox="0 0 48 48" className="size-5"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5Z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.25 5.48-4.72 7.18l7.62 5.91c4.45-4.1 7.14-10.15 7.14-17.56Z"/><path fill="#FBBC05" d="M10.53 28.59A14.4 14.4 0 0 1 9.75 24c0-1.59.28-3.13.78-4.59l-7.98-6.2A23.94 23.94 0 0 0 0 24c0 3.87.93 7.53 2.56 10.78l7.97-6.19Z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.9-5.89l-7.62-5.91c-2.12 1.42-4.83 2.26-8.28 2.26-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48Z"/></svg>Google</button>}
+            {providers.microsoft && <button type="button" onClick={() => startOAuth('microsoft')} disabled={busy} className="inline-flex h-12 items-center justify-center gap-3 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-600/15 disabled:opacity-60" aria-label="Continue with Microsoft"><svg aria-hidden="true" viewBox="0 0 24 24" className="size-5"><path fill="#F25022" d="M1 1h10v10H1z"/><path fill="#7FBA00" d="M13 1h10v10H13z"/><path fill="#00A4EF" d="M1 13h10v10H1z"/><path fill="#FFB900" d="M13 13h10v10H13z"/></svg>Microsoft</button>}
+          </div>
+        </>}
         <div className="my-6 flex items-center gap-3" aria-hidden="true"><span className="h-px flex-1 bg-slate-200" /><span className="text-[11px] font-medium uppercase tracking-widest text-slate-400">Private learning space</span><span className="h-px flex-1 bg-slate-200" /></div>
         <p className="text-center text-sm leading-6 text-slate-500">Your administrator creates your account.<br />There is no public signup.</p>
         <footer className="mt-8 text-center text-xs text-slate-400">© {new Date().getFullYear()} LinguaLoop · Learn at your pace</footer>

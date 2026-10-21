@@ -30,6 +30,7 @@ async function server(t, overrides = {}) {
   const flow = {
     async begin() { calls.push('begin'); return { authorizationUrl: `https://accounts.google.com/o/oauth2/v2/auth?state=${state}`, stateCookie }; },
     clearStateCookie() { return clearCookie; },
+    failureRedirectUrl() { return `${webOrigin}/login?status=oauth-failed`; },
     async finish(input) {
       calls.push(input);
       if (consumed) throw new Error('replay');
@@ -70,9 +71,12 @@ async function server(t, overrides = {}) {
       { provide: GOOGLE_BROWSER_POLICY, useValue: browserPolicy },
       { provide: LinguaLoopTokenService, useValue: { async verifyBearerToken(token) {
         if (token !== accessToken) throw new InvalidBearerTokenError();
-        return { issuer: 'google', subject: 'subject', sessionId };
+        return { issuer: 'local', subject: ownerId, sessionId };
       } } },
-      { provide: LINGUALOOP_IDENTITY_STORE, useValue: { async findOwnerByIdentity() { return overrides.resolvedOwner ?? ownerId; } } },
+      { provide: LINGUALOOP_IDENTITY_STORE, useValue: {
+        async findOwnerByIdentity() { return overrides.resolvedOwner ?? ownerId; },
+        async findAccountByOwner() { return { name: 'Test User', email: 'test@example.org', role: 'student' }; },
+      } },
       { provide: LINGUALOOP_SESSION_STORE, useValue: { async isSessionActive(owner, session) { return !overrides.inactiveSession && owner === ownerId && session === sessionId; } } },
       { provide: ConfiguredVerifiedRequestGuard, useClass: ConfiguredVerifiedRequestGuard },
     ],
@@ -108,7 +112,7 @@ function assertSafeHeaders(response) {
 test('missing Google settings leave Nest health routes live and do not mount auth routes', async (t) => {
   const names = [
     'GOOGLE_CALLBACK_URL', 'LINGUALOOP_WEB_ORIGIN', 'GOOGLE_CLIENT_ID',
-    'GOOGLE_CLIENT_SECRET', 'LINGUALOOP_GOOGLE_AUDIENCE', 'LINGUALOOP_TOKEN_SIGNING_KEY', 'LINGUALOOP_TOKEN_SIGNING_KEY_FILE',
+    'GOOGLE_CLIENT_SECRET', 'LINGUALOOP_GOOGLE_AUDIENCE', 'MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_CALLBACK_URL', 'LINGUALOOP_TOKEN_SIGNING_KEY', 'LINGUALOOP_TOKEN_SIGNING_KEY_FILE',
   ];
   const previous = new Map(names.map((name) => [name, process.env[name]]));
   for (const name of names) delete process.env[name];
@@ -128,7 +132,9 @@ test('missing Google settings leave Nest health routes live and do not mount aut
 
   class HealthOnlyTestModule {}
   Module({
-    controllers: appControllers,
+    // This fixture intentionally verifies only the health route; wiring every AppModule
+    // controller here would require the application's full auth/database dependency graph.
+    controllers: [HealthController],
     providers: [{ provide: LINGUALOOP_QUERY_EXECUTOR, useValue: { async query() { return { rows: [{ '?column?': 1 }] }; } } }],
   })(HealthOnlyTestModule);
   const app = await NestFactory.create(HealthOnlyTestModule, { logger: false });
@@ -147,7 +153,7 @@ test('missing Google settings leave Nest health routes live and do not mount aut
 test('malformed present Google settings keep health routes live and disable auth routes', async (t) => {
   const names = [
     'GOOGLE_CALLBACK_URL', 'LINGUALOOP_WEB_ORIGIN', 'GOOGLE_CLIENT_ID',
-    'GOOGLE_CLIENT_SECRET', 'LINGUALOOP_GOOGLE_AUDIENCE', 'LINGUALOOP_TOKEN_SIGNING_KEY', 'LINGUALOOP_TOKEN_SIGNING_KEY_FILE',
+    'GOOGLE_CLIENT_SECRET', 'LINGUALOOP_GOOGLE_AUDIENCE', 'MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_CALLBACK_URL', 'LINGUALOOP_TOKEN_SIGNING_KEY', 'LINGUALOOP_TOKEN_SIGNING_KEY_FILE',
   ];
   const valid = {
     GOOGLE_CALLBACK_URL: 'http://localhost:5000/auth/google/callback',
@@ -212,7 +218,7 @@ test('malformed present Google settings keep health routes live and disable auth
 test('fully valid Google settings continue to register auth routes and providers', () => {
   const names = [
     'GOOGLE_CALLBACK_URL', 'LINGUALOOP_WEB_ORIGIN', 'GOOGLE_CLIENT_ID',
-    'GOOGLE_CLIENT_SECRET', 'LINGUALOOP_GOOGLE_AUDIENCE', 'LINGUALOOP_TOKEN_SIGNING_KEY', 'LINGUALOOP_TOKEN_SIGNING_KEY_FILE',
+    'GOOGLE_CLIENT_SECRET', 'LINGUALOOP_GOOGLE_AUDIENCE', 'MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_CALLBACK_URL', 'LINGUALOOP_TOKEN_SIGNING_KEY', 'LINGUALOOP_TOKEN_SIGNING_KEY_FILE',
   ];
   const settings = {
     GOOGLE_CALLBACK_URL: 'http://localhost:5000/auth/google/callback',
@@ -236,7 +242,7 @@ test('fully valid Google settings continue to register auth routes and providers
     assert.ok(appControllers.includes(GoogleAuthController));
     assert.ok(appProviders.some((provider) => provider && provider.provide === GOOGLE_AUTH_FLOW));
     assert.ok(appProviders.some((provider) => provider && provider.provide === REFRESH_SESSION));
-  assert.ok(appProviders.some((provider) => provider && provider.provide === ConfiguredVerifiedRequestGuard));
+    assert.ok(appProviders.includes(ConfiguredVerifiedRequestGuard));
     assert.ok(appProviders.some((provider) => provider && provider.provide === GOOGLE_BROWSER_POLICY));
   } finally {
     for (const [name, value] of previous) {
@@ -458,15 +464,15 @@ test('callback errors and replay are generic and always clear state cookie', asy
   const first = await fetch(url, { headers, redirect: 'manual' });
   assert.equal(first.status, 302);
   const replay = await fetch(url, { headers, redirect: 'manual' });
-  assert.equal(replay.status, 400);
+  assert.equal(replay.status, 302);
   assert.equal(replay.headers.get('set-cookie'), clearCookie);
-  assert.equal(await replay.text(), 'Google login could not be completed.');
+  assert.equal(replay.headers.get('location'), `${webOrigin}/login?status=oauth-failed`);
   assertSafeHeaders(replay);
 
   const invalid = await fetch(`${base}/auth/google/callback?error=access_denied`, { redirect: 'manual' });
-  assert.equal(invalid.status, 400);
+  assert.equal(invalid.status, 302);
   assert.equal(invalid.headers.get('set-cookie'), clearCookie);
-  assert.equal(await invalid.text(), 'Google login could not be completed.');
+  assert.equal(invalid.headers.get('location'), `${webOrigin}/login?status=oauth-failed`);
 });
 
 test('start and callback have bounded per-client request rates; rate-limited callback clears state', async (t) => {

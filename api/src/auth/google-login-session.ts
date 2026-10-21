@@ -24,8 +24,8 @@ export interface GoogleLoginSessionResult {
 }
 
 export interface GoogleLoginSessionDependencies {
-  googleIdentityService: Pick<GoogleIdentityService, 'verify'>;
-  identityStore: Pick<IdentityStore, 'getOrCreateOwner'>;
+  googleIdentityService: { verify(idToken: string, nonce?: string, accessToken?: string): Promise<VerifiedIdentity> };
+  identityStore: Pick<IdentityStore, 'linkExternalIdentity'>;
   sessionStore: Pick<SessionStore, 'createSession' | 'revokeSession'>;
   refreshStore: Pick<RefreshStore, 'initialize'>;
   tokenService: Pick<LinguaLoopTokenService, 'issue'>;
@@ -47,7 +47,7 @@ export class GoogleLoginSession {
     }
   }
 
-  async issue(idToken: string): Promise<GoogleLoginSessionResult> {
+  async issue(idToken: string, nonce?: string, accessToken?: string): Promise<GoogleLoginSessionResult> {
     if (typeof idToken !== 'string' || idToken.length === 0 || idToken.length > MAX_ID_TOKEN_LENGTH) {
       throw new GoogleLoginSessionError();
     }
@@ -55,7 +55,7 @@ export class GoogleLoginSession {
     let identity: VerifiedIdentity;
     try {
       // No store or credential operation may happen until the cryptographic verifier accepts this token.
-      identity = await this.dependencies.googleIdentityService.verify(idToken);
+      identity = await this.dependencies.googleIdentityService.verify(idToken, nonce, accessToken);
       this.validateVerifiedIdentity(identity);
     } catch {
       throw new GoogleLoginSessionError();
@@ -65,7 +65,7 @@ export class GoogleLoginSession {
     let nowMs: number;
     let expiresAtMs: number;
     try {
-      ownerId = await this.dependencies.identityStore.getOrCreateOwner(identity);
+      ownerId = await this.dependencies.identityStore.linkExternalIdentity(identity);
       nowMs = this.now();
       expiresAtMs = absoluteSessionExpiry(nowMs);
     } catch {
@@ -88,8 +88,9 @@ export class GoogleLoginSession {
         throw new Error('Refresh initialization failed.');
       }
       const accessToken = await this.dependencies.tokenService.issue({
-        issuer: identity.issuer,
-        subject: identity.subject,
+        // App sessions bind to the provisioned LinguaLoop account, not the external IdP subject.
+        issuer: 'local',
+        subject: ownerId,
         sessionId,
       });
       if (typeof accessToken !== 'string' || accessToken.length === 0) throw new Error('Token issuance failed.');
@@ -105,7 +106,7 @@ export class GoogleLoginSession {
   }
 
   private validateVerifiedIdentity(identity: VerifiedIdentity): void {
-    if (!identity || typeof identity !== 'object' || identity.issuer !== 'google' ||
+    if (!identity || typeof identity !== 'object' || !['google', 'microsoft'].includes(identity.issuer) ||
         typeof identity.subject !== 'string' || identity.subject.length === 0 ||
         Buffer.byteLength(identity.subject, 'utf8') > MAX_SUBJECT_BYTES ||
         Buffer.from(identity.subject, 'utf8').toString('utf8') !== identity.subject ||

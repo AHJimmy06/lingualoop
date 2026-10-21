@@ -26,7 +26,7 @@ function fixture(overrides = {}) {
       },
     },
     identityStore: {
-      async getOrCreateOwner(identity) {
+      async linkExternalIdentity(identity) {
         events.push('owner');
         calls.identity.push(identity);
         return OWNER;
@@ -86,7 +86,7 @@ test('verifies token before any database mutation and issues absolute seven-day 
   assert.deepEqual(calls.session, [{ owner: OWNER, expiry: NOW + 7 * 24 * 60 * 60 * 1000 }]);
   assert.deepEqual(calls.refresh, [{ owner: OWNER, session: SESSION, hash: REFRESH_HASH, at: NOW }]);
   assert.equal(JSON.stringify(calls.refresh).includes(REFRESH), false);
-  assert.deepEqual(calls.token, [{ issuer: 'google', subject: IDENTITY.subject, sessionId: SESSION }]);
+  assert.deepEqual(calls.token, [{ issuer: 'local', subject: OWNER, sessionId: SESSION }]);
   assert.deepEqual(result, {
     accessToken: ACCESS,
     refreshCredential: REFRESH,
@@ -113,7 +113,7 @@ test('invalid token and non-Google verifier identity are rejected before all sto
 });
 
 test('unapproved email rejects generically before session, refresh or token issuance', async () => {
-  const f = fixture({ identityStore: { async getOrCreateOwner(identity) {
+  const f = fixture({ identityStore: { async linkExternalIdentity(identity) {
     f.events.push('approval-rejected');
     assert.equal(identity.email, IDENTITY.email);
     throw Error('approval missing for private email');

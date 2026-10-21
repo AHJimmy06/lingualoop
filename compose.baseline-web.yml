@@ -4,6 +4,7 @@ name: lingualoop-baseline-web
 services:
   web:
     image: ${LINGUALOOP_WEB_IMAGE:-ghcr.io/ahjimmy06/lingualoop-web:latest}
+    container_name: lingualoop-web-1
     pull_policy: always
     restart: unless-stopped
     stop_grace_period: 10s
@@ -15,5 +16,5 @@ services:
 networks:
   existing-api:
     external: true
-    # Explicit name from compose.postgres.yml; this file cannot create it.
-    name: lingualoop-postgres-net
+    # Shared existing network lets the reverse proxy reach web and API containers.
+    name: proxy-network

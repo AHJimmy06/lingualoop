@@ -3,6 +3,9 @@ import { HealthController } from './health.controller';
 import { PracticeCatalogueController } from './language-practice/practice-catalogue.controller';
 import { AdminAccountsController, CurrentAccountController } from './auth/accounts.controller';
 import { PasswordAuthController } from './auth/password-auth.controller';
+import { GoogleAuthController } from './auth/google-auth.controller';
+import { AuthProvidersController, MicrosoftAuthController } from './auth/microsoft-auth.controller';
+import { createExternalAuthProviders, externalProviderAvailability } from './auth/external-auth.providers';
 import { AUTH_STORE_PROVIDERS } from './auth/auth-store.providers';
 import { PASSWORD_AUTH_PROVIDERS } from './auth/password-auth.providers';
 import { createPracticeRuntimeProviders, loadPracticeRuntimeConfiguration } from './language-practice/practice-runtime.providers';
@@ -18,6 +21,8 @@ import { createLinguaLoopQueryExecutor, LINGUALOOP_QUERY_EXECUTOR, LinguaLoopPos
 
 const practiceRuntimeConfiguration = loadPracticeRuntimeConfiguration();
 const piperRuntimeConfiguration = loadPiperRuntimeConfiguration();
+const externalAuthAvailability = externalProviderAvailability(process.env);
+const externalAuthProviders = createExternalAuthProviders(externalAuthAvailability);
 // Media/coach availability remains independent of account, refresh and catalogue routes.
 const languagePracticeTurnProviders = practiceRuntimeConfiguration && piperRuntimeConfiguration
   ? createLanguagePracticeTurnProviders(process.env) : [];
@@ -27,7 +32,9 @@ const turnsEnabled = hasTurnProvider(LANGUAGE_PRACTICE_TURN_COACH) && hasTurnPro
 
 @Module({
   controllers: [
-    HealthController, PasswordAuthController, CurrentAccountController, AdminAccountsController,
+    HealthController, PasswordAuthController, CurrentAccountController, AdminAccountsController, AuthProvidersController,
+    ...(externalAuthAvailability.google ? [GoogleAuthController] : []),
+    ...(externalAuthAvailability.microsoft ? [MicrosoftAuthController] : []),
     PracticeCatalogueController, LanguagePracticeSessionController,
     LanguagePracticeTurnController,
     ...(practiceRuntimeConfiguration ? [PracticeAudioController] : []),
@@ -35,7 +42,7 @@ const turnsEnabled = hasTurnProvider(LANGUAGE_PRACTICE_TURN_COACH) && hasTurnPro
   ],
   providers: [
     { provide: LINGUALOOP_QUERY_EXECUTOR, useFactory: () => new LinguaLoopPostgresProvider(createLinguaLoopQueryExecutor()) },
-    ...AUTH_STORE_PROVIDERS, ...LANGUAGE_PRACTICE_SESSION_PROVIDERS, ...PASSWORD_AUTH_PROVIDERS,
+    ...AUTH_STORE_PROVIDERS, ...LANGUAGE_PRACTICE_SESSION_PROVIDERS, ...PASSWORD_AUTH_PROVIDERS, ...externalAuthProviders,
     ...(practiceRuntimeConfiguration ? [
       ...createPracticeRuntimeProviders(practiceRuntimeConfiguration),
       { provide: PRACTICE_AUDIO_PREPARER, useValue: practiceAudioPreparer }, PracticeAudioService,

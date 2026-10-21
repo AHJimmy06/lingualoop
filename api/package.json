@@ -18,6 +18,7 @@
     "@nestjs/jwt": "11.0.2",
     "@nestjs/platform-express": "^11.1.14",
     "google-auth-library": "10.9.1",
+    "jose": "5.9.6",
     "multer": "2.2.0",
     "openai": "6.25.0",
     "pg": "8.16.3",

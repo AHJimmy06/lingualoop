@@ -9,6 +9,7 @@ export class OAuthStateStoreError extends Error {
 }
 
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
+const PROVIDERS = new Set(['google', 'microsoft']);
 const INSERT_STATE_SQL = `
   INSERT INTO lingualoop_oauth_states (state_hash, expires_at_ms, provider)
   VALUES ($1, $2, $3)
@@ -26,7 +27,7 @@ function validateHash(hash: string): void {
 function validateRecord(record: OAuthStateRecord): void {
   if (!record || typeof record !== 'object' || Array.isArray(record) ||
       !Number.isSafeInteger(record.expiresAt) || record.expiresAt <= 0 ||
-      record.provider !== 'google') {
+      typeof record.provider !== 'string' || !PROVIDERS.has(record.provider)) {
     throw new OAuthStateStoreError();
   }
 }
@@ -37,7 +38,7 @@ function returnedRecord(result: QueryResult): OAuthStateRecord | null {
   if (result.rows.length !== 1) throw new OAuthStateStoreError();
 
   const row = result.rows[0] as { expires_at_ms?: unknown; provider?: unknown } | null;
-  if (!row || typeof row !== 'object' || row.provider !== 'google') throw new OAuthStateStoreError();
+  if (!row || typeof row !== 'object' || typeof row.provider !== 'string' || !PROVIDERS.has(row.provider)) throw new OAuthStateStoreError();
   const rawExpiry = row.expires_at_ms;
   const expiresAt = typeof rawExpiry === 'number'
     ? rawExpiry
@@ -45,7 +46,7 @@ function returnedRecord(result: QueryResult): OAuthStateRecord | null {
       ? Number(rawExpiry)
       : Number.NaN;
   if (!Number.isSafeInteger(expiresAt) || expiresAt <= 0) throw new OAuthStateStoreError();
-  return { expiresAt, provider: 'google' };
+  return { expiresAt, provider: row.provider };
 }
 
 /** PostgreSQL-backed, hash-only OAuth state storage. */

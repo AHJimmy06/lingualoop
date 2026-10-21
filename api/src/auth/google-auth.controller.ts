@@ -51,7 +51,7 @@ export const GOOGLE_AUTH_RATE_LIMITER = Symbol('GOOGLE_AUTH_RATE_LIMITER');
 @Controller()
 export class GoogleAuthController {
   constructor(
-    @Inject(GOOGLE_AUTH_FLOW) private readonly flow: Pick<GoogleAuthFlow, 'begin' | 'finish' | 'clearStateCookie'>,
+    @Inject(GOOGLE_AUTH_FLOW) private readonly flow: Pick<GoogleAuthFlow, 'begin' | 'finish' | 'clearStateCookie' | 'failureRedirectUrl'>,
     @Inject(GOOGLE_AUTH_RATE_LIMITER) private readonly limiter: GoogleAuthRateLimiter,
     @Inject(REFRESH_SESSION) private readonly refreshSession: Pick<RefreshSession, 'refresh' | 'logout'>,
     @Inject(GOOGLE_BROWSER_POLICY) private readonly browserPolicy: ReturnType<typeof createGoogleBrowserPolicy>,
@@ -94,7 +94,7 @@ export class GoogleAuthController {
       response.redirect(302, result.redirectUrl);
     } catch {
       response.setHeader('Set-Cookie', this.flow.clearStateCookie());
-      response.status(400).send(GENERIC_FAILURE);
+      response.redirect(302, this.flow.failureRedirectUrl());
     }
   }
 

@@ -34,6 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 python3
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/dist ./dist
+COPY db/migrations ./db/migrations
 COPY scripts/whisper-stt-server.py ./scripts/whisper-stt-server.py
 VOLUME ["/models"]
 

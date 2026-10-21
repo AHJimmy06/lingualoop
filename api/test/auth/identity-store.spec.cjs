@@ -19,13 +19,13 @@ test('retired provider admission never creates or links any account', async () =
 test('findOwnerByIdentity binds local UUID identity and returns null only for absence', async () => {
   const f = fixture([{ id: ID }]);
   assert.equal(await f.store.findOwnerByIdentity(identity), ID);
-  assert.deepEqual(f.calls[0].parameters, ['local', ID]);
-  assert.match(f.calls[0].sql, /WHERE issuer = \$1 AND subject = \$2 AND id::text = \$2/);
+  assert.deepEqual(f.calls[0].parameters, [ID]);
+  assert.match(f.calls[0].sql, /WHERE issuer = 'local' AND subject = \$1 AND id::text = \$1/);
   assert.equal(await fixture().store.findOwnerByIdentity(identity), null);
 });
-test('invalid external issuer or unstable subject rejects before querying', async () => {
+test('unsupported issuer and unstable local subjects reject before querying', async () => {
   const f = fixture();
-  for (const value of [null, {}, { issuer: 'google', subject: ID }, { issuer: 'nousai', subject: ID },
+  for (const value of [null, {}, { issuer: 'nousai', subject: ID }, { issuer: 'local', subject: 'not-a-uuid' },
     ...['', 'has space', 'has\ncontrol', '\ud800', 'e\u0301', 'é'.repeat(257)].map(subject => ({ issuer: 'local', subject }))]) {
     await assert.rejects(f.store.findOwnerByIdentity(value), IdentityStoreError);
   }

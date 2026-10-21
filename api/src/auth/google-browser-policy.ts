@@ -20,6 +20,7 @@ export class GoogleBrowserPolicyError extends Error {
 export interface GoogleBrowserPolicyOptions {
   callbackUrl: string;
   webOrigin: string;
+  stateCookieName?: string;
   /** Must atomically consume the matching state in the backing store. */
   consumeState?: (state: string) => Promise<unknown>;
 }
@@ -43,7 +44,9 @@ export function createGoogleBrowserPolicy(options: GoogleBrowserPolicyOptions) {
   }
 
   const secure = callback.protocol === 'https:';
-  const stateName = secure ? '__Host-lingualoop-oauth-state' : 'lingualoop-oauth-state';
+  const configuredStateName = options.stateCookieName ?? 'lingualoop-oauth-state';
+  if (!/^[a-zA-Z0-9-]{1,64}$/.test(configuredStateName)) throw new TypeError('OAuth state cookie name is invalid.');
+  const stateName = secure ? `__Host-${configuredStateName}` : configuredStateName;
   const refreshName = secure ? '__Host-lingualoop-refresh' : 'lingualoop-refresh';
   const cookieAttributes = `Path=/; HttpOnly${secure ? '; Secure' : ''}; SameSite=Lax`;
 

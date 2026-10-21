@@ -82,6 +82,10 @@ export class GoogleAuthFlow {
     return this.policy.clearStateCookie();
   }
 
+  failureRedirectUrl(): string {
+    return `${this.dependencies.webOrigin}/login?status=oauth-failed`;
+  }
+
   async finish(callback: GoogleAuthCallback): Promise<{
     redirectUrl: string;
     refreshCookie: string;
