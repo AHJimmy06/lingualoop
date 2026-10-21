@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const windows = process.platform === 'win32';
 const {
   PRACTICE_FFMPEG_PATH,
   PRACTICE_RUNTIME,
@@ -9,27 +10,30 @@ const {
 } = require('../../dist/language-practice/practice-runtime.providers.js');
 
 const validEnv = {
-  LINGUALOOP_STT_PYTHON: '/opt/lingualoop/venv/bin/python',
-  LINGUALOOP_FASTCONFORMER_MODEL_PATH: '/opt/lingualoop/models/fastconformer.nemo',
-  LINGUALOOP_FASTCONFORMER_MODEL_SHA256: 'a'.repeat(64),
-  LANGUAGE_PRACTICE_FFMPEG_PATH: '/usr/bin/ffmpeg',
+  LINGUALOOP_STT_ENABLED: 'true',
+  LINGUALOOP_STT_START_MODE: 'managed',
+  LINGUALOOP_STT_SERVER_URL: 'http://127.0.0.1:8080',
+  LINGUALOOP_STT_PORT: '8080',
+  LINGUALOOP_STT_MODEL: 'base.en',
+  LINGUALOOP_STT_PYTHON: windows ? 'C:\\lingualoop\\venv\\Scripts\\python.exe' : '/opt/lingualoop/venv/bin/python',
+  LINGUALOOP_STT_CPU_THREADS: '4',
+  LANGUAGE_PRACTICE_FFMPEG_PATH: windows ? 'C:\\ffmpeg\\ffmpeg.exe' : '/usr/bin/ffmpeg',
 };
 
-test('practice runtime accepts only complete, exact absolute paths and a SHA-256 digest', () => {
+test('practice runtime accepts only the fixed CPU Whisper model and complete local config', () => {
   const configuration = loadPracticeRuntimeConfiguration(validEnv);
   assert.ok(configuration);
   assert.equal(configuration.pythonExecutable, validEnv.LINGUALOOP_STT_PYTHON);
-  assert.equal(configuration.modelPath, validEnv.LINGUALOOP_FASTCONFORMER_MODEL_PATH);
   assert.equal(configuration.ffmpegExecutable, validEnv.LANGUAGE_PRACTICE_FFMPEG_PATH);
-  assert.match(configuration.workerPath, /scripts\/fastconformer-worker\.py$/);
+  assert.equal(configuration.model, 'base.en');
+  assert.match(configuration.serverScript, /scripts[\\/]whisper-stt-server\.py$/);
 
   for (const env of [
     {},
     { ...validEnv, LINGUALOOP_STT_PYTHON: 'python' },
-    { ...validEnv, LINGUALOOP_STT_PYTHON: '/opt/../python' },
-    { ...validEnv, LINGUALOOP_STT_PYTHON: '/opt/python\0hidden' },
-    { ...validEnv, LINGUALOOP_FASTCONFORMER_MODEL_SHA256: 'A'.repeat(64) },
-    { ...validEnv, LINGUALOOP_FASTCONFORMER_MODEL_SHA256: 'a'.repeat(63) },
+    { ...validEnv, LINGUALOOP_STT_PYTHON: windows ? 'C:\\opt\\..\\python.exe' : '/opt/../python' },
+    { ...validEnv, LINGUALOOP_STT_PYTHON: windows ? 'C:\\opt\\bad\0hidden.exe' : '/opt/python\0hidden' },
+    { ...validEnv, LINGUALOOP_STT_MODEL: 'nemotron-3.5' },
   ]) {
     assert.equal(loadPracticeRuntimeConfiguration(env), undefined);
   }
@@ -50,12 +54,8 @@ test('practice providers expose FFmpeg and own one lazy host with shutdown clean
   assert.equal(runtime.host, undefined);
   const host = runtime.getHost();
   assert.equal(runtime.getHost(), host);
-  assert.equal(host.config.startupTimeoutMs, 60000);
-  assert.equal(host.config.requestTimeoutMs, undefined);
-  let shutdownCalls = 0;
-  host.shutdown = async () => { shutdownCalls++; };
   await runtime.onApplicationShutdown();
-  assert.equal(shutdownCalls, 1);
+  assert.throws(() => runtime.getHost(), /stopped or closed/);
 });
 
 test('shutdown before first host use does not construct a host', async () => {

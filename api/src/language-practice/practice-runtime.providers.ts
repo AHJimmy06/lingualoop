@@ -9,14 +9,17 @@ export const PRACTICE_FFMPEG_PATH = Symbol('PRACTICE_FFMPEG_PATH');
 
 export type PracticeRuntimeConfiguration = {
   serverUrl: string;
-  model: string;
+  model: 'base.en';
   ffmpegExecutable: string;
-  sttExecutable: string;
+  pythonExecutable?: string;
+  serverScript: string;
   port: number;
+  startMode: 'managed' | 'external';
+  cpuThreads: number;
 };
 type SttHost = { transcribe(path: string): Promise<string> };
-
-const MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const READINESS_TIMEOUT_MS = 6 * 60_000;
+const MAX_REQUEST_MS = 90_000;
 
 function isExactAbsolutePath(value: unknown): value is string {
   if (typeof value !== 'string' || value.length === 0 || value.includes('\0') || !isAbsolute(value) ||
@@ -27,64 +30,74 @@ function isExactAbsolutePath(value: unknown): value is string {
     : normalized === value;
 }
 
-export function loadPracticeRuntimeConfiguration(
-  env: NodeJS.ProcessEnv = process.env,
-): PracticeRuntimeConfiguration | undefined {
+export function loadPracticeRuntimeConfiguration(env: NodeJS.ProcessEnv = process.env): PracticeRuntimeConfiguration | undefined {
   try {
     if (env.LINGUALOOP_STT_ENABLED !== 'true') return undefined;
+    const model = env.LINGUALOOP_STT_MODEL ?? 'base.en';
     const rawUrl = env.LINGUALOOP_STT_SERVER_URL;
-    const model = env.LINGUALOOP_STT_MODEL;
     const ffmpegExecutable = env.LANGUAGE_PRACTICE_FFMPEG_PATH;
-    const sttExecutable = env.LINGUALOOP_STT_EXECUTABLE;
-    const port = Number(env.LINGUALOOP_STT_PORT);
-    if (typeof rawUrl !== 'string' || typeof model !== 'string' || !MODEL_ID_PATTERN.test(model) ||
-        !isExactAbsolutePath(ffmpegExecutable) || !isExactAbsolutePath(sttExecutable) ||
-        !Number.isInteger(port) || port < 1024 || port > 65535) return undefined;
+    const startMode = env.LINGUALOOP_STT_START_MODE ?? 'managed';
+    const rawPython = env.LINGUALOOP_STT_PYTHON;
+    const port = Number(env.LINGUALOOP_STT_PORT ?? '8080');
+    const cpuThreads = Number(env.LINGUALOOP_STT_CPU_THREADS ?? '4');
+    if (model !== 'base.en' || (startMode !== 'managed' && startMode !== 'external') ||
+        typeof rawUrl !== 'string' || !isExactAbsolutePath(ffmpegExecutable) ||
+        !Number.isInteger(port) || port < 1024 || port > 65535 ||
+        !Number.isInteger(cpuThreads) || cpuThreads < 1 || cpuThreads > 16) return undefined;
     const parsed = new URL(rawUrl);
-    // Speech remains strictly local: a bad .env must never turn private recordings into remote uploads.
-    if (parsed.protocol !== 'http:' || parsed.hostname !== '127.0.0.1' || !parsed.port ||
-        parsed.username || parsed.password || parsed.search || parsed.hash || parsed.pathname !== '/') return undefined;
+    // Audio may only go to our local process or a named, private Docker network service.
+    const local = parsed.protocol === 'http:' && parsed.hostname === '127.0.0.1' && parsed.port === String(port);
+    const privateDocker = parsed.protocol === 'http:' && parsed.hostname === 'stt' && parsed.port === String(port);
+    if (!(local || (privateDocker && startMode === 'external')) || parsed.username || parsed.password ||
+        parsed.search || parsed.hash || parsed.pathname !== '/') return undefined;
+    const pythonExecutable = rawPython === undefined ? undefined : rawPython;
+    if (startMode === 'managed' && !isExactAbsolutePath(pythonExecutable)) return undefined;
+    if (startMode === 'external' && !local && !privateDocker) return undefined;
     return {
-      serverUrl: parsed.origin,
-      model,
-      ffmpegExecutable,
-      sttExecutable,
-      port,
+      serverUrl: parsed.origin, model: 'base.en', ffmpegExecutable,
+      pythonExecutable,
+      serverScript: resolve(process.cwd(), 'scripts/whisper-stt-server.py'),
+      port, startMode, cpuThreads,
     };
-  } catch {
-    return undefined;
-  }
+  } catch { return undefined; }
 }
 
-/** The external local model server is started explicitly by a developer command, never by API startup. */
+/** Owns local STT lifecycle; in Compose, waits on the private `stt` service instead. */
 @Injectable()
 export class PracticeRuntimeHost implements OnApplicationShutdown {
-  private host?: { transcribe(path: string): Promise<string> };
+  private host?: SttHost;
   private stopped = false;
+  private spawnFailed = false;
   private sttProcess?: ChildProcess;
 
   constructor(private readonly configuration: PracticeRuntimeConfiguration) {}
 
   async start(): Promise<void> {
-    const healthUrl = `${this.configuration.serverUrl}/ready`;
-    try {
-      const response = await fetch(healthUrl, { signal: AbortSignal.timeout(1_000) });
-      if (response.ok) return; // An explicitly started local STT instance is already serving.
-    } catch { /* API owns startup when STT is not already running. */ }
-    this.sttProcess = spawn(this.configuration.sttExecutable, [
-      'serve', '--host', '127.0.0.1', '--port', String(this.configuration.port),
-      '--asr-model', this.configuration.model, '--device', 'cuda', '--no-ui',
-    ], { windowsHide: true, stdio: 'ignore' });
-    this.sttProcess.once('error', () => { this.sttProcess = undefined; });
-    for (let attempt = 0; attempt < 90; attempt += 1) {
-      if (this.sttProcess.exitCode !== null) throw new Error('Local STT exited during API startup');
-      await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
-      try {
-        const response = await fetch(healthUrl, { signal: AbortSignal.timeout(1_000) });
-        if (response.ok) return;
-      } catch { /* Model server is still loading. */ }
+    if (this.configuration.startMode === 'managed') {
+      this.sttProcess = spawn(this.configuration.pythonExecutable!, [
+        this.configuration.serverScript, '--host', '127.0.0.1', '--port', String(this.configuration.port),
+        '--model', this.configuration.model, '--compute-type', 'int8',
+        '--cpu-threads', String(this.configuration.cpuThreads),
+      ], { windowsHide: true, detached: process.platform !== 'win32', stdio: 'ignore' });
+      this.sttProcess.once('error', () => { this.spawnFailed = true; this.sttProcess = undefined; });
     }
-    throw new Error('Local STT did not become ready during API startup');
+    const deadline = Date.now() + READINESS_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      if (this.stopped) throw new Error('Local STT startup cancelled');
+      if (this.configuration.startMode === 'managed' &&
+          (this.spawnFailed || this.sttProcess?.exitCode !== null && this.sttProcess?.exitCode !== undefined)) {
+        throw new Error('Whisper STT exited during startup');
+      }
+      try {
+        const response = await fetch(`${this.configuration.serverUrl}/ready`, { signal: AbortSignal.timeout(1_000) });
+        const body: unknown = await response.json();
+        if (response.ok && body && typeof body === 'object' &&
+            (body as Record<string, unknown>).ready === true &&
+            (body as Record<string, unknown>).model === 'base.en') return;
+      } catch { /* model is still loading */ }
+      await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
+    }
+    throw new Error('Whisper STT did not become ready during API startup');
   }
 
   getHost(): SttHost {
@@ -94,12 +107,12 @@ export class PracticeRuntimeHost implements OnApplicationShutdown {
         if (!isExactAbsolutePath(path)) throw new SttDiagnosticError('nemo_request_path');
         const file = await readFile(path);
         const form = new FormData();
-        form.set('model', 'default');
-        form.set('language', 'auto');
+        form.set('model', 'base.en');
+        form.set('language', 'en');
         form.set('response_format', 'json');
         form.set('file', new Blob([file], { type: 'audio/wav' }), 'audio.wav');
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 90_000);
+        const timer = setTimeout(() => controller.abort(), MAX_REQUEST_MS);
         try {
           const response = await fetch(`${this.configuration.serverUrl}/v1/audio/transcriptions`, {
             method: 'POST', body: form, signal: controller.signal,
@@ -124,19 +137,19 @@ export class PracticeRuntimeHost implements OnApplicationShutdown {
 
   async onApplicationShutdown(): Promise<void> {
     this.stopped = true;
-    this.sttProcess?.kill();
+    const child = this.sttProcess;
     this.sttProcess = undefined;
+    if (!child || child.exitCode !== null) return;
+    if (process.platform !== 'win32' && child.pid) {
+      try { process.kill(-child.pid, 'SIGTERM'); return; } catch { /* try the direct child */ }
+    }
+    try { child.kill('SIGTERM'); } catch { /* already exited */ }
   }
 }
 
-export function createPracticeRuntimeProviders(
-  configuration: PracticeRuntimeConfiguration,
-): Provider[] {
+export function createPracticeRuntimeProviders(configuration: PracticeRuntimeConfiguration): Provider[] {
   return [
-    {
-      provide: PRACTICE_RUNTIME,
-      useFactory: () => new PracticeRuntimeHost(configuration),
-    },
+    { provide: PRACTICE_RUNTIME, useFactory: () => new PracticeRuntimeHost(configuration) },
     { provide: PRACTICE_FFMPEG_PATH, useValue: configuration.ffmpegExecutable },
   ];
 }

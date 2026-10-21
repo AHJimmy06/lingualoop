@@ -21,7 +21,7 @@ test('bootstrap locks create-once decision and never promotes or overwrites any 
     const store = new AccountStore({ async query() { throw Error('must transact'); }, async withTransaction(callback) {
       return callback({ async query(sql, values) {
         calls.push({ sql, values });
-        if (sql.includes("WHERE role = 'admin'")) return { rows: existing };
+        if (sql.includes('FROM lingualoop_accounts LIMIT 1')) return { rows: existing };
         if (sql.includes('INSERT')) return { rows: [{ id: ID, name: input.name, email: input.email, role: 'admin', created_at: new Date('2026-01-01') }] };
         return { rows: [] };
       } });

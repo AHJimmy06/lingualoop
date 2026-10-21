@@ -1,0 +1,5 @@
+# Validated in the isolated Windows Python 3.12 benchmark, not app dependencies.
+faster-whisper==1.2.1
+ctranslate2==4.8.3
+av==16.1.0
+psutil==7.2.2

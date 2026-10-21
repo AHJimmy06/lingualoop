@@ -82,8 +82,9 @@ export class AccountStore {
       if (!this.executor.withTransaction) throw new AccountStoreError();
       return await this.executor.withTransaction(async tx => {
         await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['lingualoop:first-admin']);
-        const admins = await tx.query("SELECT id, name, email, role, created_at FROM lingualoop_accounts WHERE role = 'admin'", []);
-        if (admins.rows.length) throw new AccountStoreError();
+        // The initial administrator must be the first account of any role.
+        const accounts = await tx.query('SELECT id FROM lingualoop_accounts LIMIT 1', []);
+        if (accounts.rows.length) throw new AccountStoreError();
         const result = await tx.query(INSERT, [name, email, hash, 'admin', randomUUID()]);
         if (result.rows.length !== 1) throw new AccountStoreError();
         return account(result.rows[0]);

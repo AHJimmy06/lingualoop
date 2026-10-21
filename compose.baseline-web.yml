@@ -3,12 +3,9 @@ name: lingualoop-baseline-web
 
 services:
   web:
-    # Require a unique baseline tag; do not reuse it for later role changes.
-    image: ${LINGUALOOP_BASELINE_WEB_IMAGE:?Set a unique baseline frontend image tag}
-    build:
-      context: ./web
-      dockerfile: Dockerfile
-    restart: "no"
+    image: ${LINGUALOOP_WEB_IMAGE:-ghcr.io/ahjimmy06/lingualoop-web:latest}
+    pull_policy: always
+    restart: unless-stopped
     stop_grace_period: 10s
     ports:
       - "127.0.0.1:5001:80"
