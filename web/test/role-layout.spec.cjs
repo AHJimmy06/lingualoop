@@ -80,7 +80,7 @@ test('admin stacks on mobile and bounds the desktop form beside a shrinkable acc
   assert.match(view, /<form[^\n]*className="grid min-w-0 gap-4/);
   assert.match(view, /<section className="min-w-0 rounded-2xl/);
   assert.match(view, /<li key=\{account.id\} className="min-w-0[^"\n]*\[overflow-wrap:anywhere\]/);
-  assert.equal((view.match(/className="min-w-0 rounded-md border bg-background p-3"/g) || []).length, 4);
+  assert.equal((view.match(/className="min-w-0 rounded-md border bg-background p-3"/g) || []).length, 2);
   assert.match(view, /onSubmit=\{event => void submit\(event\)\}/);
   assert.match(view, /disabled=\{!valid \|\| busy\}/);
   assert.match(view, /if \(!valid \|\| pending.current\) return;/);

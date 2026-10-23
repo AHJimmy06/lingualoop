@@ -36,7 +36,7 @@ export function ReportLearningNotes({ id, title, notes, legacyNotes, emptyMessag
       </table>
     </div> : <p className="mt-3 text-sm leading-6 text-muted-foreground">{emptyMessage}</p>
       : <div className="mt-3 text-sm leading-6 text-muted-foreground">
-        <p>Prepare the English version to view these annotations in English.</p>
+        <p>Original saved annotations are available below.</p>
         {legacyNotes.length > 0 && <details className="mt-3 rounded-lg border p-3"><summary className="cursor-pointer font-medium">Saved notes · Español</summary>
           <ul lang="es" className="mt-2 grid list-disc gap-2 pl-5">{legacyNotes.map((note, index) => <li className="whitespace-pre-wrap" key={index}>{note}</li>)}</ul>
         </details>}

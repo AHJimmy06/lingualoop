@@ -64,7 +64,7 @@ test('allowlisted admin POST preserves JSON across one 401 refresh and clears te
   let posts = 0;
   const approval = { id, name: 'New Student', email: 'new@example.com', role: 'student', createdAt: date };
   const { auth, calls } = transport(() => ++posts === 1 ? json({}, 401) : json(approval, 201), { ...profile, role: 'admin' });
-  const input = { name: approval.name, email: approval.email, password: 'exact password ', role: approval.role };
+  const input = { email: approval.email, role: approval.role };
   assert.equal((await auth.postAdminAccounts('/api/admin/accounts', input)).status, 201);
   const requests = calls.filter(c => c.url === '/api/admin/accounts');
   assert.equal(requests.length, 2);
@@ -132,13 +132,17 @@ test('admin account DTOs, duplicate guidance and form restrictions are strict', 
   let response = json(approval, 201);
   const { auth, calls } = transport(() => response, { ...profile, role: 'admin' });
   const client = new AdminAccountsClient(auth);
-  const input = { name: 'New Teacher', email: 'new@example.com', password: 'exact password ', role: 'teacher' };
+  const input = { email: 'new@example.com', role: 'teacher' };
   assert.deepEqual(await client.createAccount(input), approval);
   assert.deepEqual(JSON.parse(calls.at(-1).init.body), input);
   response = json({ accounts: [approval] });
   assert.deepEqual(await client.listAccounts(), [approval]);
+  response = json({ accounts: [{ ...approval, name: null }] });
+  assert.deepEqual(await client.listAccounts(), [{ ...approval, name: null }]);
+  response = json({ ...approval, name: null }, 201);
+  assert.equal((await client.createAccount(input)).name, null);
   const before = calls.length;
-  for (const invalid of [{ ...input, role: 'admin' }, { ...input, email: 'bad' }, { ...input, extra: true }, { ...input, name: ' ' }, { ...input, name: 'x'.repeat(121) }, { ...input, password: 'short' }, { ...input, password: 'x'.repeat(129) }]) await assert.rejects(client.createAccount(invalid), { kind: 'invalid-input' });
+  for (const invalid of [{ ...input, role: 'admin' }, { ...input, email: 'bad' }, { ...input, extra: true }, { ...input, name: ' ' }, { ...input, name: 'x'.repeat(121) }, { ...input, password: 'not-accepted' }]) await assert.rejects(client.createAccount(invalid), { kind: 'invalid-input' });
   assert.equal(calls.length, before);
   response = json({}, 409);
   await assert.rejects(client.createAccount({ ...input, role: 'student' }), /already exists/);

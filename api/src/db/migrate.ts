@@ -15,7 +15,7 @@ const REQUIRED_MIGRATIONS = [
   '007_language_practice_turn_lease.sql', '008_language_practice_reports.sql',
   '009_language_practice_ai_reports.sql', '010_language_practice_report_claims.sql',
   '011_roles_practices.sql', '012_custom_practice_theme_image.sql',
-  '013_practice_difficulty.sql', '014_external_identity_providers.sql',
+  '013_practice_difficulty.sql', '014_external_identity_providers.sql', '015_oauth_registration.sql', '016_oauth_invitation_names.sql',
 ];
 
 export interface MigrationClient {

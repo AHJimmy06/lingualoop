@@ -12,6 +12,7 @@ export interface GoogleIdTokenPayload {
   exp?: unknown;
   email?: unknown;
   email_verified?: unknown;
+  name?: unknown;
 }
 
 export type GoogleTicketVerifier = (
@@ -23,6 +24,7 @@ export interface GoogleIdentity {
   issuer: 'google';
   subject: string;
   email: string;
+  name?: string;
 }
 
 export class InvalidGoogleIdTokenError extends Error {
@@ -85,7 +87,7 @@ export class GoogleIdentityService {
           Buffer.from(subject, 'utf8').toString('utf8') !== subject) {
         throw new InvalidGoogleIdTokenError();
       }
-      return { issuer: 'google', subject, email };
+      return { issuer: 'google', subject, email, ...(typeof payload.name === 'string' && payload.name.trim() ? { name: payload.name.trim().slice(0, 120) } : {}) };
     } catch {
       throw new InvalidGoogleIdTokenError();
     }

@@ -34,8 +34,8 @@ test('renders evidence-backed report sections and bounded-list empty states', ()
   assert.match(routeView, /<main className="authenticated-page \[overflow-wrap:anywhere\]"/);
   assert.doesNotMatch(routeView, /max-w-3xl|max-w-5xl/);
   assert.doesNotMatch(content, /\[&_p\]:max-w-prose|\[&_dd\]:max-w-prose|\[&_ul\]:max-w-prose/);
-  assert.match(view, /getOrCreateReport\(sessionId\)/);
-  assert.match(routeView, /<PracticeReportContent report=\{report\} session=\{session\} turnsUnavailable=\{turnsUnavailable\}[\s\S]*learningSupport=\{learningSupport\}/);
+  assert.match(view, /getCompleteReport\(sessionId\)/);
+  assert.match(routeView, /<PracticeReportContent report=\{report\} session=\{session\} learningSupport=\{learningSupport\}/);
   assert.doesNotMatch(content, /authSession|getOrCreateReport|fetch\(/);
   assert.match(content, /<ReportSpeechButton text=\{support\.suggestedEnglish\} language="en"/);
   assert.match(content, /Saved wording · Español/);
@@ -67,9 +67,9 @@ test('loads once, prevents overlapping requests, and retries a failed report req
   assert.match(view, /new LanguagePracticeClient\(authSession\)/);
   assert.match(view, /useEffect\(\(\) => \{/);
   assert.match(view, /void loadReport\(\)/);
-  assert.match(view, /Promise\.allSettled\(/);
-  assert.match(view, /client\.getSession\(sessionId\)/);
-  assert.match(view, /return \(\) => \{ disposed = true; supportVersion\.current\+\+; \};/);
+  assert.match(view, /await client\.getCompleteReport\(sessionId\)/);
+  assert.doesNotMatch(routeView, /getCachedReportLearningSupport|prepareReportLearningSupport|Prepare English version/);
+  assert.match(view, /return \(\) => \{ disposed = true; \};/);
   assert.match(view, /\[attempt, client, sessionId\]/);
   assert.match(view, /setAttempt\(\(current\) => current \+ 1\)/);
   assert.match(view, /Try again/);
@@ -82,12 +82,12 @@ test('shows distinct safe recovery guidance and actions for each report error ki
   assert.match(view, /This session is still in progress\. Return to your session and finish practicing before viewing its report\./);
   assert.match(view, /This practice session could not be found\. Return to setup to start a new practice session\./);
   assert.match(view, /This session link is not valid\. Return to setup to start a new practice session\./);
-  assert.match(view, /The session remains saved\. You can try loading its report again\./);
+  assert.match(view, /The session remains saved\. The complete report is not ready yet\. Try again to finish preparing it\./);
   assert.match(view, /errorKind !== 'conflict' && errorKind !== 'not-found' && errorKind !== 'invalid-input'/);
   assert.match(view, /errorKind !== 'not-found' && errorKind !== 'invalid-input'/);
   assert.match(view, /role="alert"/);
   assert.match(view, /Return to practice setup/);
-  assert.match(view, /setErrorKind\(reportResult\.reason instanceof LanguagePracticeClientError \? reportResult\.reason\.kind : 'unavailable'\)/);
+  assert.match(view, /setErrorKind\(cause instanceof LanguagePracticeClientError \? cause\.kind : 'unavailable'\)/);
   assert.doesNotMatch(view, /error\.message|publicMessage/);
 });
 

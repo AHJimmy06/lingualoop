@@ -158,10 +158,46 @@ function validateSetup(value: unknown): asserts value is LanguagePracticeSetup {
   try { inputPracticeDifficulty(setup); } catch { throw new LanguagePracticeSessionStoreError(); }
 }
 
+export interface PracticeHistoryItem {
+  id: string; status: 'COMPLETED' | 'EXPIRED'; title: string | null;
+  topic: LanguagePracticeTopic; level: LanguagePracticeLevel; difficulty: PracticeDifficulty | null;
+  durationMinutes: LanguagePracticeDurationMinutes; startedAt: string; finishedAt: string; reportReady: boolean;
+}
+
 /** Stores only original setup/session state; ownership always comes from the verified caller context. */
 export class LanguagePracticeSessionStore {
   constructor(private readonly executor: QueryExecutor) {
     if (!executor || typeof executor.query !== 'function') throw new TypeError('A query executor is required.');
+  }
+
+  /** Read-only, bounded history. The owner always comes from the authenticated session. */
+  async listHistory(ownerId: string, offset = 0): Promise<{ sessions: PracticeHistoryItem[]; nextOffset: number | null }> {
+    uuid(ownerId);
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100_000) throw new LanguagePracticeSessionStoreError();
+    try {
+      const result = rows(await this.executor.query(`
+        SELECT s.id, CASE WHEN s.status = 'COMPLETED' THEN 'COMPLETED' ELSE 'EXPIRED' END AS status,
+          p.title, s.topic, s.level, s.difficulty, s.duration_minutes AS "durationMinutes",
+          s.started_at AS "startedAt", COALESCE(s.completed_at, s.expires_at) AS "finishedAt",
+          EXISTS (SELECT 1 FROM lingualoop_language_practice_reports r WHERE r.session_id = s.id) AS "reportReady"
+        FROM lingualoop_language_practice_sessions s
+        LEFT JOIN lingualoop_practices p ON p.id = s.practice_id
+        WHERE s.owner_id = $1 AND (s.status IN ('COMPLETED', 'EXPIRED') OR s.expires_at <= NOW())
+        ORDER BY s.started_at DESC, s.id DESC LIMIT 21 OFFSET $2
+      `, [ownerId, offset]), 0, 21);
+      const sessions = result.slice(0, 20).map(value => {
+        const row = value as Record<string, unknown>;
+        const checked = session({ ...row, expiresAt: row.finishedAt, remainingMs: 0 });
+        if (!['COMPLETED', 'EXPIRED'].includes(checked.status) || typeof row.reportReady !== 'boolean' ||
+            (row.title !== null && (typeof row.title !== 'string' || !row.title.trim() || row.title.length > 120)))
+          throw new LanguagePracticeSessionStoreError();
+        return { id: checked.id, status: checked.status as 'COMPLETED' | 'EXPIRED', title: row.title as string | null,
+          topic: checked.topic, level: checked.level, difficulty: checked.difficulty,
+          durationMinutes: checked.durationMinutes, startedAt: checked.startedAt,
+          finishedAt: timestamp(row.finishedAt), reportReady: row.reportReady };
+      });
+      return { sessions, nextOffset: result.length > 20 && offset < 100_000 ? offset + 20 : null };
+    } catch { throw new LanguagePracticeSessionStoreError(); }
   }
 
   async createSession(ownerId: string, setup: LanguagePracticeSetup): Promise<LanguagePracticeSession> {

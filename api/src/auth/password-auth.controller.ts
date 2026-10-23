@@ -1,7 +1,4 @@
-import { Body, Controller, Inject, Post, Req, Res, UseGuards } from '@nestjs/common';
-import { normalizeEmail } from './account-role';
-import { validatePassword } from './password-hash';
-import { InvalidCredentialsError, PASSWORD_LOGIN_SESSION, PasswordLoginSession } from './password-login-session';
+import { Controller, Inject, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { ConfiguredVerifiedRequestGuard, REFRESH_SESSION } from './google-auth.providers';
 import { GOOGLE_AUTH_RATE_LIMITER, GoogleAuthRateLimiter } from './google-auth.controller';
 import { GOOGLE_BROWSER_POLICY, createGoogleBrowserPolicy } from './google-browser-policy';
@@ -13,8 +10,7 @@ type Request = { socket?: { remoteAddress?: string }; headers: { origin?: string
 type Response = { setHeader(name: string, value: string): void; status(code: number): Response; send(body: string): void };
 @Controller('auth')
 export class PasswordAuthController {
-  constructor(@Inject(PASSWORD_LOGIN_SESSION) private readonly loginSession: PasswordLoginSession,
-    @Inject(GOOGLE_AUTH_RATE_LIMITER) private readonly limiter: GoogleAuthRateLimiter,
+  constructor(@Inject(GOOGLE_AUTH_RATE_LIMITER) private readonly limiter: GoogleAuthRateLimiter,
     @Inject(REFRESH_SESSION) private readonly refreshSession: Pick<RefreshSession, 'refresh' | 'logout'>,
     @Inject(GOOGLE_BROWSER_POLICY) private readonly policy: ReturnType<typeof createGoogleBrowserPolicy>) {}
 
@@ -25,33 +21,7 @@ export class PasswordAuthController {
     response.setHeader('Referrer-Policy', 'no-referrer');
     response.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
   }
-  @Post('login')
-  async login(@Body() body: unknown, @Req() request: Request, @Res() response: Response) {
-    this.headers(response);
-    if (!this.policy.isAllowedRefreshOrLogoutOrigin(request.headers.origin)) { response.status(403).send('Forbidden.'); return; }
-    if (!this.limiter.allow(request.socket?.remoteAddress ?? '', 'start')) { response.status(429).send('Too many requests.'); return; }
-    let email: string;
-    let password: string;
-    try {
-      if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).sort().join(',') !== 'email,password') throw new Error();
-      const input = body as Record<string, unknown>;
-      email = normalizeEmail(input.email);
-      validatePassword(input.password);
-      password = input.password;
-    } catch { response.status(400).send('Invalid login input.'); return; }
-    let result: Awaited<ReturnType<PasswordLoginSession['issue']>> | undefined;
-    try {
-      result = await this.loginSession.issue(email, password);
-      const cookie = this.policy.refreshCookie(result.refreshCredential, result.expiresAtMs, Date.now());
-      response.setHeader('Set-Cookie', cookie);
-      response.setHeader('Content-Type', 'application/json; charset=utf-8');
-      response.status(200).send(JSON.stringify({ authenticated: true }));
-    } catch (error) {
-      if (result) await result.compensateDeliveryFailure();
-      response.setHeader('Set-Cookie', this.policy.clearRefreshCookie());
-      response.status(error instanceof InvalidCredentialsError ? 401 : 503).send(error instanceof InvalidCredentialsError ? 'Invalid credentials.' : 'Login service unavailable.');
-    }
-  }
+  // Sign-in is exclusively handled by the Google and Microsoft OAuth controllers.
   @Post('refresh')
   async refresh(@Req() request: Request, @Res() response: Response) {
     this.headers(response);

@@ -84,7 +84,7 @@ test('account listing accepts bootstrap admin with student but rejects unknown r
   }
   await assert.rejects(client.createAccount({ name: admin.name, email: admin.email, password: 'password', role: 'admin' }), { kind: 'invalid-input' });
   assert.equal(posts, 0, 'listing administrator accounts must not authorize administrator creation');
-  await assert.rejects(client.createAccount({ name: student.name, email: student.email, password: 'password', role: 'student' }), { kind: 'invalid-response' });
+  await assert.rejects(client.createAccount({ email: student.email, role: 'student' }), { kind: 'invalid-response' });
   assert.equal(posts, 1, 'a create response must still reject an unexpected administrator role');
 });
 test('teacher result routes never open student routes to other roles', () => {

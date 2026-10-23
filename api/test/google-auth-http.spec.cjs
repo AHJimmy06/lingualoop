@@ -112,7 +112,7 @@ function assertSafeHeaders(response) {
 test('missing Google settings leave Nest health routes live and do not mount auth routes', async (t) => {
   const names = [
     'GOOGLE_CALLBACK_URL', 'LINGUALOOP_WEB_ORIGIN', 'GOOGLE_CLIENT_ID',
-    'GOOGLE_CLIENT_SECRET', 'LINGUALOOP_GOOGLE_AUDIENCE', 'MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_CALLBACK_URL', 'LINGUALOOP_TOKEN_SIGNING_KEY', 'LINGUALOOP_TOKEN_SIGNING_KEY_FILE',
+    'GOOGLE_CLIENT_SECRET', 'MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_CALLBACK_URL', 'LINGUALOOP_TOKEN_SIGNING_KEY', 'LINGUALOOP_TOKEN_SIGNING_KEY_FILE',
   ];
   const previous = new Map(names.map((name) => [name, process.env[name]]));
   for (const name of names) delete process.env[name];
@@ -153,14 +153,13 @@ test('missing Google settings leave Nest health routes live and do not mount aut
 test('malformed present Google settings keep health routes live and disable auth routes', async (t) => {
   const names = [
     'GOOGLE_CALLBACK_URL', 'LINGUALOOP_WEB_ORIGIN', 'GOOGLE_CLIENT_ID',
-    'GOOGLE_CLIENT_SECRET', 'LINGUALOOP_GOOGLE_AUDIENCE', 'MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_CALLBACK_URL', 'LINGUALOOP_TOKEN_SIGNING_KEY', 'LINGUALOOP_TOKEN_SIGNING_KEY_FILE',
+    'GOOGLE_CLIENT_SECRET', 'MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_CALLBACK_URL', 'LINGUALOOP_TOKEN_SIGNING_KEY', 'LINGUALOOP_TOKEN_SIGNING_KEY_FILE',
   ];
   const valid = {
     GOOGLE_CALLBACK_URL: 'http://localhost:5000/auth/google/callback',
     LINGUALOOP_WEB_ORIGIN: 'http://localhost:5001',
     GOOGLE_CLIENT_ID: 'client-id.apps.googleusercontent.com',
     GOOGLE_CLIENT_SECRET: 'client-secret',
-    LINGUALOOP_GOOGLE_AUDIENCE: 'client-id.apps.googleusercontent.com',
     LINGUALOOP_TOKEN_SIGNING_KEY: 'a'.repeat(32),
   };
   const malformed = [
@@ -168,7 +167,7 @@ test('malformed present Google settings keep health routes live and disable auth
     { ...valid, LINGUALOOP_WEB_ORIGIN: 'http://127.0.0.1:5001' },
     { ...valid, GOOGLE_CLIENT_ID: ' contains whitespace ' },
     { ...valid, GOOGLE_CLIENT_SECRET: '   ' },
-    { ...valid, LINGUALOOP_GOOGLE_AUDIENCE: '   ' },
+    { ...valid, GOOGLE_CLIENT_ID: '   ' },
     { ...valid, LINGUALOOP_TOKEN_SIGNING_KEY: 'too-short' },
     { ...valid, LINGUALOOP_TOKEN_SIGNING_KEY: undefined },
     { ...valid, LINGUALOOP_TOKEN_SIGNING_KEY_FILE: 'relative/key' },
@@ -218,14 +217,13 @@ test('malformed present Google settings keep health routes live and disable auth
 test('fully valid Google settings continue to register auth routes and providers', () => {
   const names = [
     'GOOGLE_CALLBACK_URL', 'LINGUALOOP_WEB_ORIGIN', 'GOOGLE_CLIENT_ID',
-    'GOOGLE_CLIENT_SECRET', 'LINGUALOOP_GOOGLE_AUDIENCE', 'MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_CALLBACK_URL', 'LINGUALOOP_TOKEN_SIGNING_KEY', 'LINGUALOOP_TOKEN_SIGNING_KEY_FILE',
+    'GOOGLE_CLIENT_SECRET', 'MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_CALLBACK_URL', 'LINGUALOOP_TOKEN_SIGNING_KEY', 'LINGUALOOP_TOKEN_SIGNING_KEY_FILE',
   ];
   const settings = {
     GOOGLE_CALLBACK_URL: 'http://localhost:5000/auth/google/callback',
     LINGUALOOP_WEB_ORIGIN: 'http://localhost:5001',
     GOOGLE_CLIENT_ID: 'client-id.apps.googleusercontent.com',
     GOOGLE_CLIENT_SECRET: 'client-secret',
-    LINGUALOOP_GOOGLE_AUDIENCE: 'client-id.apps.googleusercontent.com',
     LINGUALOOP_TOKEN_SIGNING_KEY: 'a'.repeat(32),
   };
   const previous = new Map(names.map((name) => [name, process.env[name]]));

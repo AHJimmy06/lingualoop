@@ -9,7 +9,6 @@ const authEnvironment = {
   GOOGLE_CALLBACK_URL: 'http://localhost:5001/auth/google/callback',
   GOOGLE_CLIENT_ID: 'test-client-id',
   GOOGLE_CLIENT_SECRET: 'test-client-secret',
-  LINGUALOOP_GOOGLE_AUDIENCE: 'test-audience',
   LINGUALOOP_TOKEN_SIGNING_KEY: 'test-signing-key-that-is-long-enough-for-validation',
   LINGUALOOP_WEB_ORIGIN: 'http://localhost:5173',
 };

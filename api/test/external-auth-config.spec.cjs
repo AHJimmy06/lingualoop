@@ -6,7 +6,6 @@ const key = 'k'.repeat(32);
 const google = {
   GOOGLE_CLIENT_ID: 'google-client-id.apps.googleusercontent.com',
   GOOGLE_CLIENT_SECRET: 'google-secret',
-  LINGUALOOP_GOOGLE_AUDIENCE: 'google-client-id.apps.googleusercontent.com',
   GOOGLE_CALLBACK_URL: 'http://localhost:5000/auth/google/callback',
   LINGUALOOP_WEB_ORIGIN: 'http://localhost:5001',
   LINGUALOOP_TOKEN_SIGNING_KEY: key,
@@ -30,4 +29,11 @@ test('Microsoft provider rejects an insecure non-loopback callback and mismatche
   assert.deepEqual(externalProviderAvailability({ ...microsoft, LINGUALOOP_WEB_ORIGIN: 'http://localhost:5001',
     MICROSOFT_CALLBACK_URL: 'http://127.0.0.1:5000/auth/microsoft/callback', LINGUALOOP_TOKEN_SIGNING_KEY: key }),
   { google: false, microsoft: false });
+});
+
+test('Google client ID alone determines availability and must be nonempty printable ASCII', () => {
+  assert.deepEqual(externalProviderAvailability(google), { google: true, microsoft: false });
+  for (const clientId of [undefined, '', '   ', 'invalid client id']) {
+    assert.equal(externalProviderAvailability({ ...google, GOOGLE_CLIENT_ID: clientId }).google, false);
+  }
 });

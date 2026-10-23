@@ -1,5 +1,3 @@
-import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
 import { Pool } from 'pg';
 import type { QueryExecutor, QueryResult } from '../auth/identity-store';
 
@@ -44,37 +42,6 @@ export class LinguaLoopDatabaseError extends Error {
   }
 }
 
-function readPasswordFile(filePath: string | undefined): string {
-  if (!filePath || !isAbsolute(filePath)) throw new LinguaLoopDatabaseConfigurationError();
-
-  let descriptor: number | undefined;
-  try {
-    descriptor = openSync(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-    const stat = fstatSync(descriptor);
-    if (!stat.isFile() || stat.size < 64 || stat.size > 65) {
-      throw new LinguaLoopDatabaseConfigurationError();
-    }
-
-    const content = Buffer.alloc(66);
-    const bytesRead = readSync(descriptor, content, 0, content.length, 0);
-    const password = content.subarray(0, bytesRead).toString('ascii');
-    if (!/^[0-9a-f]{64}\n?$/.test(password)) {
-      throw new LinguaLoopDatabaseConfigurationError();
-    }
-    return password.endsWith('\n') ? password.slice(0, -1) : password;
-  } catch {
-    throw new LinguaLoopDatabaseConfigurationError();
-  } finally {
-    if (descriptor !== undefined) {
-      try {
-        closeSync(descriptor);
-      } catch {
-        // Do not expose filesystem details or credential material.
-      }
-    }
-  }
-}
-
 export function loadLinguaLoopPostgresConfig(
   environment: NodeJS.ProcessEnv = process.env,
 ): LinguaLoopPostgresConfig {
@@ -86,10 +53,15 @@ export function loadLinguaLoopPostgresConfig(
     throw new LinguaLoopDatabaseConfigurationError();
   }
 
+  const password = environment.LINGUALOOP_DB_PASSWORD;
+  if (typeof password !== 'string' || !/^[0-9a-f]{64}$/.test(password)) {
+    throw new LinguaLoopDatabaseConfigurationError();
+  }
+
   return {
     host,
     port,
-    password: readPasswordFile(environment.LINGUALOOP_DB_PASSWORD_FILE),
+    password,
   };
 }
 

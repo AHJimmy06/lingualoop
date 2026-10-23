@@ -22,6 +22,7 @@ const failureMessage = 'Recording could not be completed. Please try again.';
 export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, onRecordingChange }: PracticeRecorderProps) {
   const [recording, setRecording] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState('');
   const [automaticStop, setAutomaticStop] = useState(false);
@@ -37,6 +38,10 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, o
   const startedAtRef = useRef(0);
   const requestedDurationRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const onRecordedRef = useRef(onRecorded);
+  onRecordedRef.current = onRecorded;
+  const onBusyChangeRef = useRef(onBusyChange);
+  onBusyChangeRef.current = onBusyChange;
   const onRecordingChangeRef = useRef(onRecordingChange);
   const speakingDetachRef = useRef<(() => void) | null>(null);
   onRecordingChangeRef.current = onRecordingChange;
@@ -73,9 +78,10 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, o
     requestedDurationRef.current = null;
     startingRef.current = false;
     setStarting(false);
+    setFinalizing(false);
     setRecording(false);
-    onBusyChange?.(false);
-  }, [clearTimer, onBusyChange, releaseTracks, stopSilenceMonitor]);
+    onBusyChangeRef.current?.(false);
+  }, [clearTimer, releaseTracks, stopSilenceMonitor]);
 
   const stop = useCallback(() => {
     const recorder = recorderRef.current;
@@ -83,6 +89,7 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, o
     clearTimer();
     stopSilenceMonitor();
     requestedDurationRef.current = performance.now() - startedAtRef.current;
+    setFinalizing(true);
     try {
       recorder.stop();
     } catch {
@@ -90,13 +97,13 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, o
       cancel();
       return;
     }
-    releaseTracks();
-  }, [cancel, clearTimer, releaseTracks, stopSilenceMonitor]);
+    // Keep the stream alive until final dataavailable and stop have completed.
+  }, [cancel, clearTimer, stopSilenceMonitor]);
 
   const start = useCallback(async () => {
-    if (disabledRef.current || startingRef.current || recording || disposedRef.current) return;
+    if (disabledRef.current || startingRef.current || recorderRef.current || disposedRef.current) return;
     startingRef.current = true;
-    onBusyChange?.(true);
+    onBusyChangeRef.current?.(true);
     setError('');
     setAutomaticStop(false);
     setElapsedMs(0);
@@ -135,14 +142,16 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, o
         const blob = buffer.finish(duration, recorder.mimeType);
         bufferRef.current = null;
         recorderRef.current = null;
+        setFinalizing(false);
         setRecording(false);
-        onBusyChange?.(false);
+        onBusyChangeRef.current?.(false);
         setElapsedMs(Math.min(duration, MAX_RECORDING_MS));
         releaseTracks();
-        if (blob) onRecorded(blob);
+        if (blob) onRecordedRef.current(blob);
         else if (duration >= 250) setError(failureMessage);
       }, { once: true });
       recorder.addEventListener('error', () => {
+        if (operation !== operationRef.current || disposedRef.current) return;
         setError(failureMessage);
         cancel();
       }, { once: true });
@@ -171,7 +180,7 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, o
       if (!disposedRef.current && operation === operationRef.current) {
         startingRef.current = false;
         setStarting(false);
-        if (!recorderRef.current) onBusyChange?.(false);
+        if (!recorderRef.current) onBusyChangeRef.current?.(false);
       }
     }
   }, [cancel, disabled, onBusyChange, onRecorded, recording, starting, stop, clearTimer, releaseTracks, stopSilenceMonitor]);
@@ -201,8 +210,8 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, o
   }, [cancel]);
 
   useEffect(() => {
-    onBusyChange?.(starting || recording);
-  }, [onBusyChange, recording, starting]);
+    onBusyChangeRef.current?.(starting || recording);
+  }, [recording, starting]);
 
   return (
     <div className="grid justify-items-center gap-2 text-center">
@@ -210,11 +219,11 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, o
         type="button"
         size="lg"
         className={`min-h-12 w-full max-w-xs touch-manipulation ${recording ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90' : ''}`}
-        disabled={disabled || starting}
+        disabled={disabled || starting || finalizing}
         onClick={recording ? stop : () => void start()}
-        aria-label={recording ? 'Stop recording' : starting ? 'Starting microphone' : 'Start recording'}
+        aria-label={finalizing ? 'Finishing recording' : recording ? 'Stop recording' : starting ? 'Starting microphone' : 'Start recording'}
       >
-        {recording ? 'Stop recording' : starting ? 'Starting microphone…' : disabled ? 'Recording unavailable' : 'Start recording'}
+        {finalizing ? 'Finishing recording...' : recording ? 'Stop recording' : starting ? 'Starting microphone…' : disabled ? 'Recording unavailable' : 'Start recording'}
       </Button>
       {(starting || recording) && <p className="text-sm text-muted-foreground" role="status" aria-live="polite">
         {recording ? `Recording… ${formatRecordingTime(elapsedMs)} / 0:20` : 'Starting…'}

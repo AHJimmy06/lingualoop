@@ -10,7 +10,7 @@ export function resolveRoute(pathname: string, search: string, refresh: RefreshR
   if (refresh !== 'authenticated') return { kind: 'redirect', to: refresh === 'unavailable' ? '/login?status=unavailable' : refresh === 'forbidden' ? '/login?status=forbidden' : '/login' };
   if (!role || !['admin', 'teacher', 'student'].includes(role)) return { kind: 'redirect', to: '/login?status=forbidden' };
   const home = roleHome(role);
-  const studentRoute = pathname === '/language-practice' ||
+  const studentRoute = pathname === '/language-practice' || pathname === '/language-practice/history' ||
     /^\/language-practice\/practices\/[^/]+$/.test(pathname) ||
     /^\/language-practice\/sessions\/[^/]+(?:\/complete)?$/.test(pathname);
   const teacherRoute = pathname === '/teacher' || /^\/teacher\/practices\/[^/]+\/results(?:\/[^/]+)?$/.test(pathname);

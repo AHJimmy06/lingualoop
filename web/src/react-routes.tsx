@@ -1,3 +1,4 @@
+import { PracticeHistoryView } from './features/language-practice/PracticeHistoryView';
 import { useEffect, useState, type ReactNode } from 'react';
 import {
   BrowserRouter,
@@ -58,6 +59,7 @@ export function ReactRoutes() {
         <Route path="/teacher/practices/:practiceId/results" element={<RouteGate><TeacherResultsView /></RouteGate>} />
         <Route path="/teacher/practices/:practiceId/results/:sessionId" element={<RouteGate><TeacherResultsView /></RouteGate>} />
         <Route path="/language-practice/practices/:practiceId" element={<RouteGate><CustomPracticeView /></RouteGate>} />
+        <Route path="/language-practice/history" element={<RouteGate><PracticeHistoryView /></RouteGate>} />
         <Route path="/language-practice" element={
           <RouteGate><LanguagePracticeSetupView /></RouteGate>
         } />

@@ -1,6 +1,5 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const path = require('node:path');
 const { Pool } = require('pg');
 const {
   createLinguaLoopQueryExecutor,
@@ -57,34 +56,26 @@ test('runtime config defaults to private host and port and accepts only bounded 
   for (const host of ['remote.example', 'postgres.example', 'https://postgres', 'localhost', '']) {
     assert.throws(() => loadLinguaLoopPostgresConfig({
       LINGUALOOP_DB_HOST: host,
-      LINGUALOOP_DB_PASSWORD_FILE: '/dev/null',
+      LINGUALOOP_DB_PASSWORD: PASSWORD,
     }), LinguaLoopDatabaseConfigurationError);
   }
   for (const port of ['0', '65536', '1.2', '5432x', '-1']) {
     assert.throws(() => loadLinguaLoopPostgresConfig({
       LINGUALOOP_DB_PORT: port,
-      LINGUALOOP_DB_PASSWORD_FILE: '/dev/null',
+      LINGUALOOP_DB_PASSWORD: PASSWORD,
     }), LinguaLoopDatabaseConfigurationError);
   }
 });
 
-test('password config requires an absolute regular non-symlink dedicated file path', () => {
-  const packageManifest = path.resolve(__dirname, '../../package.json');
-  const common = { LINGUALOOP_DB_PASSWORD_FILE: packageManifest };
-  assert.throws(() => loadLinguaLoopPostgresConfig({
-    ...common,
-    LINGUALOOP_DB_HOST: 'postgres',
+test('password config reads a 64-character lowercase hex value from the environment', () => {
+  assert.deepEqual(loadLinguaLoopPostgresConfig({
     LINGUALOOP_DB_PASSWORD: PASSWORD,
-  }), LinguaLoopDatabaseConfigurationError);
-  assert.throws(() => loadLinguaLoopPostgresConfig({
-    ...common,
-    LINGUALOOP_DB_HOST: 'postgres',
-    LINGUALOOP_DB_PASSWORD_FILE: 'relative/password',
-  }), LinguaLoopDatabaseConfigurationError);
-  assert.throws(() => loadLinguaLoopPostgresConfig({
-    LINGUALOOP_DB_HOST: 'postgres',
-    LINGUALOOP_DB_PASSWORD_FILE: '/dev/stdin',
-  }), LinguaLoopDatabaseConfigurationError);
+  }), { host: 'postgres', port: 5432, password: PASSWORD });
+  for (const password of ['', 'short', 'A'.repeat(64), `${PASSWORD}\n`]) {
+    assert.throws(() => loadLinguaLoopPostgresConfig({
+      LINGUALOOP_DB_PASSWORD: password,
+    }), LinguaLoopDatabaseConfigurationError);
+  }
 });
 
 test('executor rejects arbitrary hosts, invalid ports, and malformed credentials', () => {

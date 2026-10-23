@@ -7,7 +7,7 @@ export interface QueryExecutor {
   query(sql: string, parameters: readonly unknown[]): Promise<QueryResult>;
   withTransaction?<T>(callback: (tx: QueryExecutor) => Promise<T>): Promise<T>;
 }
-export interface VerifiedIdentity { issuer: string; subject: string; email?: string }
+export interface VerifiedIdentity { issuer: string; subject: string; email?: string; name?: string }
 export class IdentityStoreError extends Error {
   constructor() { super('Identity store operation failed.'); this.name = 'IdentityStoreError'; }
 }
@@ -17,46 +17,63 @@ export class IdentityStore {
   constructor(private readonly executor: QueryExecutor) {
     if (!executor || typeof executor.query !== 'function') throw new TypeError('A query executor is required.');
   }
-  /** Link a verified external identity only to an account provisioned by an administrator. */
+  /** Register or retrieve a cryptographically verified external identity. Never merge by email alone. */
   async linkExternalIdentity(identity: VerifiedIdentity): Promise<string> {
     try {
-      if (!identity || (identity.issuer !== 'google' && identity.issuer !== 'microsoft') ||
-          typeof identity.subject !== 'string' || !identity.subject.trim() ||
+      if (!identity || !['google', 'microsoft'].includes(identity.issuer) ||
+          typeof identity.subject !== 'string' || !identity.subject ||
+          identity.subject.trim() !== identity.subject || /[\p{White_Space}\p{Cc}\p{Cf}]/u.test(identity.subject) ||
+          identity.subject.normalize('NFC') !== identity.subject ||
           Buffer.byteLength(identity.subject, 'utf8') > 512 ||
-          normalizeEmail(identity.email) !== identity.email || !this.executor.withTransaction) {
-        throw new IdentityStoreError();
-      }
+          normalizeEmail(identity.email) !== identity.email || !this.executor.withTransaction) throw new IdentityStoreError();
+      const name = identity.name ?? identity.email!;
+      validateAccountName(name);
       return await this.executor.withTransaction(async tx => {
-        await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`lingualoop:external:${identity.issuer}:${identity.subject}`]);
+        // Serialize registration by email as well as provider identity.
+        await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['lingualoop:oauth-registration']);
         const existing = await tx.query(
           'SELECT account_id FROM lingualoop_external_identities WHERE issuer = $1 AND subject = $2 FOR UPDATE',
           [identity.issuer, identity.subject]);
         if (existing.rows.length === 1) {
           const ownerId = (existing.rows[0] as { account_id?: unknown }).account_id;
-          if (typeof ownerId !== 'string') throw new IdentityStoreError();
+          if (typeof ownerId !== 'string' || !UUID.test(ownerId)) throw new IdentityStoreError();
+          await tx.query('UPDATE lingualoop_accounts SET name = $2, updated_at = now() WHERE id = $1', [ownerId, name]);
           return ownerId;
         }
-        if (existing.rows.length > 1) throw new IdentityStoreError();
-        const account = await tx.query('SELECT id FROM lingualoop_accounts WHERE email = $1 FOR UPDATE', [identity.email]);
-        if (account.rows.length !== 1) throw new IdentityStoreError();
-        const ownerId = (account.rows[0] as { id?: unknown }).id;
+        if (existing.rows.length) throw new IdentityStoreError();
+        const matches = await tx.query('SELECT id FROM lingualoop_accounts WHERE email = $1 FOR UPDATE', [identity.email]);
+        let ownerId: string;
+        if (matches.rows.length === 1) {
+          ownerId = (matches.rows[0] as { id: string }).id;
+          // Manual role invitations may be claimed once; another identity needs explicit linking.
+          const linked = await tx.query('SELECT account_id FROM lingualoop_external_identities WHERE account_id = $1', [ownerId]);
+          if (linked.rows.length) throw new IdentityStoreError();
+          await tx.query('UPDATE lingualoop_accounts SET name = $2, updated_at = now() WHERE id = $1', [ownerId, name]);
+        } else if (!matches.rows.length) {
+          // Only the explicitly named, Google-verified address may bootstrap administrator access.
+          const role = identity.issuer === 'google' && identity.email === 'jimmy.anilema234@gmail.com' ? 'admin' : 'student';
+          const created = await tx.query(
+            `WITH new_id AS (SELECT gen_random_uuid() AS id)
+             INSERT INTO lingualoop_accounts (id, issuer, subject, name, email, role)
+             SELECT id, 'local', id::text, $1, $2, $3 FROM new_id RETURNING id`,
+            [name, identity.email, role]);
+          if (created.rows.length !== 1) throw new IdentityStoreError();
+          ownerId = (created.rows[0] as { id: string }).id;
+        } else throw new IdentityStoreError();
         if (typeof ownerId !== 'string' || !UUID.test(ownerId)) throw new IdentityStoreError();
+        // Prevent claiming the reserved administrator email through another provider.
+        if (identity.email === 'jimmy.anilema234@gmail.com' && identity.issuer !== 'google') throw new IdentityStoreError();
         const linked = await tx.query(
           `INSERT INTO lingualoop_external_identities (account_id, issuer, subject, email)
-           VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING account_id`,
+           VALUES ($1, $2, $3, $4) RETURNING account_id`,
           [ownerId, identity.issuer, identity.subject, identity.email]);
-        if (linked.rows.length === 1 && (linked.rows[0] as { account_id?: unknown }).account_id === ownerId) return ownerId;
-        const raced = await tx.query(
-          'SELECT account_id FROM lingualoop_external_identities WHERE issuer = $1 AND subject = $2',
-          [identity.issuer, identity.subject]);
-        if (raced.rows.length === 1 && (raced.rows[0] as { account_id?: unknown }).account_id === ownerId) return ownerId;
-        throw new IdentityStoreError();
+        if (linked.rows.length !== 1) throw new IdentityStoreError();
+        return ownerId;
       });
     } catch { throw new IdentityStoreError(); }
   }
 
-  /** External accounts cannot be auto-created; this historical entry point stays fail-closed. */
-  async getOrCreateOwner(_identity: VerifiedIdentity): Promise<string> { throw new IdentityStoreError(); }
+  async getOrCreateOwner(identity: VerifiedIdentity): Promise<string> { return this.linkExternalIdentity(identity); }
 
   async findAccountByOwner(ownerId: string): Promise<{ name: string; email: string; role: AccountRole } | null> {
     try {

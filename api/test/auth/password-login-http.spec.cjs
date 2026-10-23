@@ -3,7 +3,6 @@ const assert = require('node:assert/strict');
 require('reflect-metadata');
 const { Module } = require('@nestjs/common');
 const { NestFactory } = require('@nestjs/core');
-const { hashPassword } = require('../../dist/auth/password-hash.js');
 const { LINGUALOOP_TOKEN_SIGNING_KEY } = require('../../dist/auth/lingualoop-token.service.js');
 const { LINGUALOOP_QUERY_EXECUTOR } = require('../../dist/db/postgres.js');
 const { LANGUAGE_PRACTICE_REPORT_SERVICE } = require('../../dist/language-practice/language-practice-session.providers.js');
@@ -14,8 +13,8 @@ const origin = 'http://localhost:5001';
 process.env = { NODE_TEST_CONTEXT: process.env.NODE_TEST_CONTEXT, NODE_ENV: 'test', LINGUALOOP_WEB_ORIGIN: origin };
 const { AppModule } = require('../../dist/app.module.js');
 
-test('dynamic production module works without Google config: login cookie, rotation, /me, logout and replay', async t => {
-  const account = { id: OWNER, name: 'Student Name', email: 'student@example.test', role: 'student', password_hash: await hashPassword(' exact password '), created_at: new Date('2026-01-01') };
+test('OAuth-only module rejects password login and preserves refresh, /me, logout and replay', async t => {
+  const account = { id: OWNER, name: 'Student Name', email: 'student@example.test', role: 'student', created_at: new Date('2026-01-01') };
   let current;
   const spent = new Set();
   let expiry;
@@ -56,18 +55,32 @@ test('dynamic production module works without Google config: login cookie, rotat
   }
   for (const path of ['/auth/google', '/auth/google/callback']) assert.equal((await request(path, 'GET')).status, 404);
   const input = { email: ' STUDENT@EXAMPLE.TEST ', password: ' exact password ' };
-  assert.equal((await request('/auth/login', 'POST', input, { origin: 'http://evil.test' })).status, 403);
-  assert.equal(accountReads, 0);
-  for (const body of [{}, { ...input, role: 'admin' }, { ...input, password: 'short' }]) assert.equal((await request('/auth/login', 'POST', body)).status, 400);
-  for (const body of [{ ...input, password: input.password.trim() }, { ...input, email: 'absent@example.test' }]) {
-    const response = await request('/auth/login', 'POST', body);
-    assert.equal(response.status, 401); assert.equal(await response.text(), 'Invalid credentials.');
+  for (const body of [input, {}, { ...input, role: 'admin' }]) {
+    for (const origin of ['http://evil.test', 'http://localhost:5001']) {
+      const response = await request('/auth/login', 'POST', body, { origin });
+      assert.equal(response.status, 404);
+      assert.equal(response.headers.get('set-cookie'), null);
+    }
   }
-  const login = await request('/auth/login', 'POST', input);
-  assert.equal(login.status, 200); assert.deepEqual(await login.json(), { authenticated: true });
-  assert.match(login.headers.get('cache-control'), /no-store/);
-  assert.match(login.headers.get('set-cookie'), /HttpOnly; SameSite=Lax/);
-  const cookie = login.headers.get('set-cookie').split(';')[0];
+  assert.equal(accountReads, 0);
+  assert.deepEqual(await (await request('/auth/providers', 'GET')).json(), { google: false, microsoft: false });
+  // Seed a session through an internal fixture, never through a public login endpoint.
+  const { GoogleLoginSession } = require('../../dist/auth/google-login-session.js');
+  const { GOOGLE_BROWSER_POLICY } = require('../../dist/auth/google-browser-policy.js');
+  const stores = require('../../dist/auth/auth-store.providers.js');
+  const { LinguaLoopTokenService } = require('../../dist/auth/lingualoop-token.service.js');
+  const issuer = new GoogleLoginSession({
+    googleIdentityService: { async verify() { return { issuer: 'google', subject: 'verified-fixture', email: account.email }; } },
+    identityStore: { async linkExternalIdentity() { return OWNER; } },
+    sessionStore: app.get(stores.LINGUALOOP_SESSION_STORE),
+    refreshStore: app.get(stores.LINGUALOOP_REFRESH_STORE),
+    tokenService: app.get(LinguaLoopTokenService),
+  });
+  async function seedSessionCookie() {
+    const result = await issuer.issue('test-ticket');
+    return app.get(GOOGLE_BROWSER_POLICY).refreshCookie(result.refreshCredential, result.expiresAtMs, Date.now()).split(';')[0];
+  }
+  const cookie = await seedSessionCookie();
   const refreshed = await request('/auth/refresh', 'POST', undefined, { cookie });
   assert.equal(refreshed.status, 200);
   const auth = await refreshed.json(); assert.deepEqual(Object.keys(auth), ['accessToken']);
@@ -82,13 +95,9 @@ test('dynamic production module works without Google config: login cookie, rotat
   assert.equal(revoked, true);
   assert.equal((await request('/auth/me', 'GET', undefined, { authorization: `Bearer ${auth.accessToken}` })).status, 401);
   // New session proves old refresh reuse revokes after a successful rotation, not just logout.
-  const again = await request('/auth/login', 'POST', input); assert.equal(again.status, 200);
-  const secondCookie = again.headers.get('set-cookie').split(';')[0];
+  const secondCookie = await seedSessionCookie();
   assert.equal((await request('/auth/refresh', 'POST', undefined, { cookie: secondCookie })).status, 200);
   assert.equal((await request('/auth/refresh', 'POST', undefined, { cookie: secondCookie })).status, 401);
   assert.equal(revoked, true);
-  for (let attempt = 0; attempt < 3; attempt++) assert.equal((await request('/auth/login', 'POST', input)).status, 200);
-  const limited = await request('/auth/login', 'POST', input);
-  assert.equal(limited.status, 429);
   assert.equal(calls.some(call => call.values.includes(input.password)), false);
 });

@@ -420,3 +420,51 @@ test('learning support uses read-only cache lookup and deduplicates explicit gen
   assert.equal(calls.filter(call => call.url === path && call.init.method === 'POST').length, 1);
   assert.deepEqual(await second.getCachedReportLearningSupport(sessionId), learningSupportBody);
 });
+
+test('complete report waits for automatic bilingual generation and reuses cached support', async () => {
+  const closed = { ...sessionBody, status: 'COMPLETED', remainingMs: 0,
+    turns: [{ sequence: 1, transcript: 'I go yesterday.', assistantResponse: 'Where?', completedAt: '2026-01-01T00:01:00.000Z' }] };
+  let cached = false, release, settled = false;
+  const { auth, calls } = authenticatedFetch((url, init) => {
+    if (url.endsWith('/report')) return json(reportBody);
+    if (url.endsWith('/learning-support') && init.method === 'GET') return cached ? json(learningSupportBody) : new Response(null, { status: 204 });
+    if (url.endsWith('/learning-support')) return new Promise(resolve => { release = () => { cached = true; resolve(json(learningSupportBody)); }; });
+    if (url.endsWith(sessionId)) return json(closed);
+    throw Error('Unexpected route');
+  });
+  const client = new LanguagePracticeClient(auth);
+  const pending = client.getCompleteReport(sessionId).then(result => { settled = true; return result; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false, 'base report must not be returned before enrichment is ready');
+  assert.equal(typeof release, 'function');
+  release();
+  const result = await pending;
+  assert.deepEqual(result.report, reportBody);
+  assert.deepEqual(result.learningSupport, learningSupportBody);
+  const again = await client.getCompleteReport(sessionId);
+  assert.deepEqual(again.learningSupport, learningSupportBody);
+  assert.equal(calls.filter(c => c.url.endsWith('/learning-support') && c.init.method === 'POST').length, 1);
+});
+
+test('support failure rejects the whole report and full retry completes without new recording', async () => {
+  const closed = { ...sessionBody, status: 'COMPLETED', remainingMs: 0,
+    turns: [{ sequence: 1, transcript: 'Hello', assistantResponse: 'Hi', completedAt: '2026-01-01T00:01:00.000Z' }] };
+  let fail = true;
+  const { auth } = authenticatedFetch((url, init) => {
+    if (url.endsWith('/report')) return json(reportBody);
+    if (url.endsWith('/learning-support') && init.method === 'GET') return new Response(null, { status: 204 });
+    if (url.endsWith('/learning-support')) return fail ? json({}, 503) : json(learningSupportBody);
+    return json(closed);
+  });
+  const client = new LanguagePracticeClient(auth);
+  await assert.rejects(client.getCompleteReport(sessionId), { kind: 'unavailable' });
+  fail = false;
+  assert.deepEqual((await client.getCompleteReport(sessionId)).learningSupport, learningSupportBody);
+});
+
+test('complete report for an empty session needs no optional AI enrichment', async () => {
+  const { auth, calls } = authenticatedFetch(url => url.endsWith('/report') ? json(reportBody) : json({ ...sessionBody, status: 'EXPIRED', remainingMs: 0 }));
+  const complete = await new LanguagePracticeClient(auth).getCompleteReport(sessionId);
+  assert.deepEqual(complete.learningSupport, { corrections: [], strengths: [], recommendations: [] });
+  assert.equal(calls.some(c => c.url.includes('learning-support')), false);
+});

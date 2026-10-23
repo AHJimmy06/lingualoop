@@ -398,5 +398,5 @@ test('shared report renders exact evidence and empty states without student-muta
   for (const phrase of ['Performance summary', 'No evidence-backed corrections', 'Observed strengths', 'Next practice', 'Not assessed', 'Insufficient evidence', '&lt;script&gt;']) assert.ok(html.includes(phrase), phrase);
   assert.doesNotMatch(html, /Finish practice|Start recording|Start practice|<script>/);
   assert.match(fs.readFileSync(path.join(__dirname, '../src/features/teacher/TeacherResultsView.tsx'), 'utf8'), /<PracticeReportContent report=\{report\} \/>/);
-  assert.match(fs.readFileSync(path.join(__dirname, '../src/features/language-practice/PracticeReportView.tsx'), 'utf8'), /<PracticeReportContent report=\{report\} session=\{session\} turnsUnavailable=\{turnsUnavailable\}[\s\S]*learningSupport=\{learningSupport\}/);
+  assert.match(fs.readFileSync(path.join(__dirname, '../src/features/language-practice/PracticeReportView.tsx'), 'utf8'), /<PracticeReportContent report=\{report\} session=\{session\} learningSupport=\{learningSupport\}/);
 });

@@ -37,10 +37,9 @@ test('role screens present bounded account and teacher forms without forbidden n
   const wrap = view => renderToStaticMarkup(React.createElement(MemoryRouter, null, React.createElement(view)));
   const admin = wrap(AdminAccountsView);
   assert.match(admin, /Accounts list/);
-  assert.match(admin, /type="password"/);
-  assert.match(admin, /maxLength="128"/i);
-  assert.match(admin, /maxLength="120"/i);
-  assert.doesNotMatch(admin, /Google/);
+  assert.doesNotMatch(admin, /type="password"|>Name</);
+  assert.match(admin, /maxLength="254"/i);
+  assert.match(admin, /Google or Microsoft/);
   assert.match(admin, /type="email"/);
   assert.match(admin, /value="teacher"/);
   assert.match(admin, /value="student"/);
@@ -77,21 +76,19 @@ test('report coverage distinguishes unassessed from failure and escapes explanat
   assert.doesNotMatch(html, /<script>/);
 });
 const loginMarkup = props => renderToStaticMarkup(React.createElement(MemoryRouter, null, React.createElement(LoginView, props)));
-test('login exposes a semantic email/password form without public signup or Google navigation', () => {
+test('login uses OAuth-only registration without password fields', () => {
   const markup = loginMarkup({ status: '', logout: '' });
-  assert.match(markup, /<form/);
-  assert.match(markup, /type="email"/);
-  assert.match(markup, /type="password"/);
-  assert.match(markup, /autoComplete="current-password"/i);
-  assert.match(markup, /type="submit"/);
-  assert.doesNotMatch(markup, /Google|\/api\/auth\/google|href="\/signup"/);
+  assert.doesNotMatch(markup, /<form|type="email"|type="password"|href="\/signup"/);
+  assert.match(markup, /first sign-in creates your account/i);
+  assert.match(markup, /Checking sign-in options/);
 });
 
-test('login holds duplicate submissions and preserves password bytes without browser persistence', () => {
+test('login uses configured provider navigation without browser credential persistence', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/features/auth/LoginView.tsx'), 'utf8');
-  assert.match(source, /pending\.current/);
-  assert.match(source, /authSession\.login\(\{ email: email\.trim\(\)\.toLowerCase\(\), password \}\)/);
-  assert.doesNotMatch(source, /password\.trim|localStorage|sessionStorage/);
+  assert.match(source, /fetch\('\/api\/auth\/providers'/);
+  assert.ok(source.includes('window.location.assign(`/api/auth/${provider}`)'));
+  assert.match(source, /setBusy\(true\)/);
+  assert.doesNotMatch(source, /authSession\.login|localStorage|sessionStorage|type="password"/);
 });
 
 test('login explains unavailable refresh and unconfirmed logout without claiming success', () => {

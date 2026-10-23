@@ -29,7 +29,7 @@ export function createExternalAuthProviders(availability: { google: boolean; mic
     useFactory: (identities: IdentityStore, sessions: SessionStore, refresh: RefreshStore, tokens: LinguaLoopTokenService) =>
       new GoogleLoginSession({ googleIdentityService: { verify: (token, nonce, accessToken) => nonce
         ? new MicrosoftIdentityService(process.env.MICROSOFT_CLIENT_ID ?? '').verify(token, nonce, accessToken)
-        : new GoogleIdentityService(process.env.LINGUALOOP_GOOGLE_AUDIENCE ?? process.env.GOOGLE_CLIENT_ID ?? '').verify(token) },
+        : new GoogleIdentityService(process.env.GOOGLE_CLIENT_ID ?? '').verify(token) },
       identityStore: identities, sessionStore: sessions, refreshStore: refresh, tokenService: tokens }) },
   ];
   if (availability.google) providers.push(
@@ -57,10 +57,8 @@ export function externalProviderAvailability(env: NodeJS.ProcessEnv = process.en
   try {
     const config = loadGoogleOAuthConfig(env);
     const clientId = env.GOOGLE_CLIENT_ID;
-    const audience = env.LINGUALOOP_GOOGLE_AUDIENCE ?? clientId;
     google = signingKeyAvailable && typeof clientId === 'string' && /^[\x21-\x7e]{1,255}$/.test(clientId) &&
       typeof env.GOOGLE_CLIENT_SECRET === 'string' && !!env.GOOGLE_CLIENT_SECRET.trim() &&
-      typeof audience === 'string' && audience === clientId &&
       new URL(config.callbackUrl).hostname === new URL(config.webOrigin).hostname &&
       new URL(config.callbackUrl).protocol === new URL(config.webOrigin).protocol;
   } catch { /* Missing or malformed values keep provider disabled. */ }

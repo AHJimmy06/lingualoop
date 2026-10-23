@@ -1,15 +1,15 @@
 import type { AuthSession } from '../../auth-session';
-import { isEmail, isName, isPassword } from '../auth/profile';
+import { isEmail, isName } from '../auth/profile';
 import { hasExactKeys, isRecord, isUuid, isTimestamp, LanguagePracticeClientError, responseError } from '../language-practice/language-practice-client';
-export type Approval = { id: string; name: string; email: string; role: 'admin' | 'teacher' | 'student'; createdAt: string };
-export type AccountInput = { name: string; email: string; password: string; role: 'teacher' | 'student' };
+export type Approval = { id: string; name: string | null; email: string; role: 'admin' | 'teacher' | 'student'; createdAt: string };
+export type AccountInput = { email: string; role: 'teacher' | 'student' };
 export function validateAccountInput(value: unknown): asserts value is AccountInput {
-  if (!isRecord(value) || !hasExactKeys(value, ['name', 'email', 'password', 'role']) || !isName(value.name) || !isEmail(value.email) || !isPassword(value.password) ||
+  if (!isRecord(value) || !hasExactKeys(value, ['email', 'role']) || !isEmail(value.email) ||
       typeof value.role !== 'string' || !['teacher', 'student'].includes(value.role)) throw new LanguagePracticeClientError('invalid-input');
 }
 function parseApproval(value: unknown): Approval {
   if (!isRecord(value) || !hasExactKeys(value, ['id', 'name', 'email', 'role', 'createdAt']) ||
-      !isUuid(value.id) || !isName(value.name) || !isEmail(value.email) || typeof value.role !== 'string' || !['admin', 'teacher', 'student'].includes(value.role) ||
+      !isUuid(value.id) || (value.name !== null && !isName(value.name)) || !isEmail(value.email) || typeof value.role !== 'string' || !['admin', 'teacher', 'student'].includes(value.role) ||
       !isTimestamp(value.createdAt)) throw new LanguagePracticeClientError('invalid-response');
   return value as Approval;
 }

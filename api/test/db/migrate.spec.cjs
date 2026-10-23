@@ -12,7 +12,7 @@ const names = [
   '007_language_practice_turn_lease.sql', '008_language_practice_reports.sql',
   '009_language_practice_ai_reports.sql', '010_language_practice_report_claims.sql',
   '011_roles_practices.sql', '012_custom_practice_theme_image.sql',
-  '013_practice_difficulty.sql', '014_external_identity_providers.sql',
+  '013_practice_difficulty.sql', '014_external_identity_providers.sql', '015_oauth_registration.sql', '016_oauth_invitation_names.sql',
 ];
 const lock = 'lingualoop:schema-migrations';
 const migrationSql = names.map((name) => require('node:fs').readFileSync(path.join(migrationsDir, name), 'utf8'));
@@ -40,7 +40,7 @@ function fakeClient({ ledger = false, applied = [], collision = [], failOnSql } 
 
 test('applies ordered SQL under LinguaLoop advisory lock and closes the client', async () => {
   const fake = fakeClient();
-  assert.equal(await runLinguaLoopMigrations(fake.client, migrationsDir), 14);
+  assert.equal(await runLinguaLoopMigrations(fake.client, migrationsDir), names.length);
   assert.deepEqual(fake.calls[0].sql, 'BEGIN');
   assert.deepEqual(fake.calls[1], {
     sql: 'SELECT pg_advisory_xact_lock(hashtext($1))', parameters: [lock],
@@ -79,7 +79,7 @@ test('a complete ledger rerun is a no-op', async () => {
 for (const count of [10, 11, 12, 13]) {
   test(`existing ${count}-migration ledger receives only its additive suffix without rewriting historical SQL`, async () => {
     const fake = fakeClient({ ledger: true, applied: names.slice(0, count).map((version, index) => ({ version, checksum: hashes[index] })) });
-    assert.equal(await runLinguaLoopMigrations(fake.client, migrationsDir), 14 - count);
+    assert.equal(await runLinguaLoopMigrations(fake.client, migrationsDir), names.length - count);
     assert.deepEqual(fake.calls.filter(call => migrationSql.includes(call.sql)).map(call => call.sql), migrationSql.slice(count));
     const ledgerWrites = fake.calls.filter(call => call.sql.startsWith('INSERT INTO lingualoop_schema_migrations'));
     assert.deepEqual(ledgerWrites.map(call => call.parameters), names.slice(count).map((version, index) => [version, hashes[count + index]]));

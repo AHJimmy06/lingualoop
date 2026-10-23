@@ -25,16 +25,16 @@ export class MicrosoftIdentityService {
           !payload.sub.trim() || Buffer.byteLength(payload.sub, 'utf8') > 512) throw new Error();
       // Microsoft email/preferred_username claims aren't guaranteed to be authoritative.
       // Resolve the signed-in user's profile with the delegated User.Read token instead.
-      const profileResponse = await this.request('https://graph.microsoft.com/v1.0/me?$select=id,mail,userPrincipalName', {
+      const profileResponse = await this.request('https://graph.microsoft.com/v1.0/me?$select=id,mail,userPrincipalName,displayName', {
         headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' }, signal: AbortSignal.timeout(10_000),
       });
       if (!profileResponse.ok) throw new Error();
       const profile: unknown = await profileResponse.json();
       if (!profile || typeof profile !== 'object') throw new Error();
-      const row = profile as { id?: unknown; mail?: unknown; userPrincipalName?: unknown };
+      const row = profile as { id?: unknown; mail?: unknown; userPrincipalName?: unknown; displayName?: unknown };
       if (typeof row.id !== 'string' || !row.id.trim() || (typeof payload.oid === 'string' && payload.oid !== row.id)) throw new Error();
       const email = normalizeEmail(row.mail || row.userPrincipalName);
-      return { issuer: 'microsoft', subject: payload.sub, email };
+      return { issuer: 'microsoft', subject: payload.sub, email, ...(typeof row.displayName === 'string' && row.displayName.trim() ? { name: row.displayName.trim().slice(0, 120) } : {}) };
     } catch { throw new Error('Microsoft ID token is invalid.'); }
   }
 }

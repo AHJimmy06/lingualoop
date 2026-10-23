@@ -1,6 +1,5 @@
 import { ArrowUpRight } from 'lucide-react';
 import { ParameterCoverageView } from './ParameterCoverageView';
-import { Button } from '../../components/ui/button';
 import { ReportLearningNotes } from './ReportLearningNotes';
 import { ReportSpanishExplanation } from './ReportSpanishExplanation';
 import { ReportSpeechButton } from './ReportSpeechButton';
@@ -23,14 +22,11 @@ function youtubeSearchUrl(session: SessionDetail, report: LanguagePracticeReport
 }
 
 /** Saved report presentation: data loading remains in the route and audio in its dedicated control. */
-export function PracticeReportContent({ report, session = null, turnsUnavailable = false, learningSupport = null, supportLoading = false, supportError, onLoadSupport }: {
+export function PracticeReportContent({ report, session = null, turnsUnavailable = false, learningSupport = null }: {
   report: LanguagePracticeReport;
   session?: SessionDetail | null;
   turnsUnavailable?: boolean;
   learningSupport?: ReportLearningSupport | null;
-  supportLoading?: boolean;
-  supportError?: string;
-  onLoadSupport?: () => void;
 }) {
   return <div className="@container/report grid min-w-0 gap-6 [overflow-wrap:anywhere]">
     <section className="min-w-0 rounded-xl border bg-card p-5 shadow-sm sm:p-7" aria-labelledby="summary-title">
@@ -68,14 +64,6 @@ export function PracticeReportContent({ report, session = null, turnsUnavailable
 
     <ParameterCoverageView coverage={report.parameterCoverage} turnLinksAvailable={Boolean(session && !turnsUnavailable)} />
 
-    {!learningSupport && <section className="min-w-0 rounded-xl border bg-primary/5 p-5 sm:p-6" aria-labelledby="english-support-title">
-      <h2 id="english-support-title" className="text-lg font-semibold">English learning support</h2>
-      <p className="mt-2 text-sm leading-6 text-muted-foreground">Prepare English suggestions, observations and next steps from your saved session, with Spanish translations and explanations. Your original report stays saved.</p>
-      {onLoadSupport && <Button type="button" className="mt-4" disabled={supportLoading} onClick={onLoadSupport}>{supportLoading ? 'Preparing English version…' : 'Prepare English version'}</Button>}
-      {supportLoading && <p className="mt-3 text-sm text-muted-foreground" role="status">Preparing your bilingual learning support. No new recording is needed.</p>}
-      {supportError && <p className="mt-3 text-sm text-destructive" role="alert">{supportError}</p>}
-    </section>}
-
     <section className="min-w-0 rounded-xl border bg-card p-5 shadow-sm sm:p-7" aria-labelledby="corrections-title">
       <div><h2 id="corrections-title" className="text-lg font-semibold">Corrections tied to your transcript</h2>
         <p className="mt-1 text-sm leading-6 text-muted-foreground">The “recognized text” column is what STT captured. Suggestions are linked to the numbered conversation turns above.</p></div>
@@ -98,7 +86,7 @@ export function PracticeReportContent({ report, session = null, turnsUnavailable
               <td className="border-b px-4 py-3 leading-6">{support ? <div className="flex items-start gap-2">
                 <p lang="en" className="min-w-0 whitespace-pre-wrap">{support.suggestedEnglish}</p>
                 <ReportSpeechButton text={support.suggestedEnglish} language="en" label={`Listen to suggestion for turn ${correction.sequence}`} />
-              </div> : <div className="grid gap-2"><p className="text-muted-foreground">Prepare the English version to see a suggested phrase.</p>
+              </div> : <div className="grid gap-2"><p className="text-muted-foreground">This saved report contains the original wording below.</p>
                 {saved && <details className="rounded-lg border p-3"><summary className="cursor-pointer text-sm font-medium">Saved wording · Español</summary><p lang="es" className="mt-2 whitespace-pre-wrap">{saved.correctedPhrase}</p></details>}
               </div>}</td>
               <td className="border-b px-4 py-3 leading-6">{support ? <div className="flex items-start gap-2">

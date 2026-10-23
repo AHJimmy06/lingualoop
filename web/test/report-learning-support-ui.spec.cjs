@@ -58,19 +58,17 @@ test('English support renders suggested wording with audio and evidence-linked a
 
 test('legacy Spanish wording is explicitly labeled and cannot masquerade as an English suggestion', () => {
   const html = render({ onLoadSupport() {} });
-  assert.match(html, /Prepare English version/);
+  assert.doesNotMatch(html, /Prepare English version/);
   assert.match(html, /Saved wording · Español/);
   assert.match(html, /Saved explanation · Español/);
   assert.match(html, /Saved notes · Español/);
-  assert.match(html, /Prepare the English version to see a suggested phrase/);
+  assert.match(html, /This saved report contains the original wording below/);
   assert.doesNotMatch(html, /Listen to suggestion/);
 });
 
-test('support preparation is explicit and preserves legacy content on loading and failure', () => {
+test('read-only legacy fallback never offers partial report generation', () => {
   const html = render({ supportLoading: true, supportError: 'The service is unavailable.', onLoadSupport() {} });
-  assert.match(html, /Preparing English version/);
-  assert.match(html, /disabled/);
-  assert.match(html, /The service is unavailable/);
+  assert.doesNotMatch(html, /Preparing English version|Prepare English version|The service is unavailable/);
   assert.match(html, /Fui ayer\./);
   const dialog = fs.readFileSync(path.join(__dirname, '../src/features/language-practice/ReportSpanishExplanation.tsx'), 'utf8');
   assert.match(dialog, /Dialog\.Title/);

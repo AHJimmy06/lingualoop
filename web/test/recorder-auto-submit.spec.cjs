@@ -13,7 +13,8 @@ test('silence sends the current recording once; a later turn requires another ex
   const savedLoad = Module._load;
   const savedGlobals = Object.fromEntries(['navigator', 'window', 'MediaRecorder', 'performance', 'setInterval', 'clearInterval'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   let index = 0, time = 0, microphones = 0;
-  const hooks = [], effects = [], monitors = [], recordings = [];
+  const hooks = [], effects = [], monitors = [], recordings = [], finalEvents = [];
+  let trackStops = 0;
   const changed = (old, deps) => !old || deps.some((value, i) => value !== old.deps[i]);
   const fakeReact = {
     ...React,
@@ -39,12 +40,14 @@ test('silence sends the current recording once; a later turn requires another ex
     stop() {
       if (this.state === 'inactive') return;
       this.state = 'inactive';
-      this.dispatchEvent(Object.assign(new Event('dataavailable'), { data: new Blob(['voice'], { type: this.mimeType }) }));
-      this.dispatchEvent(new Event('stop'));
+      finalEvents.push(() => {
+        this.dispatchEvent(Object.assign(new Event('dataavailable'), { data: new Blob(['voice'], { type: this.mimeType }) }));
+        this.dispatchEvent(new Event('stop'));
+      });
     }
   }
   const setGlobal = (key, value) => Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
-  setGlobal('navigator', { mediaDevices: { async getUserMedia() { microphones++; return { getTracks: () => [{ stop() {} }] }; } } });
+  setGlobal('navigator', { mediaDevices: { async getUserMedia() { microphones++; return { getTracks: () => [{ stop() { trackStops++; } }] }; } } });
   setGlobal('window', new EventTarget()); setGlobal('MediaRecorder', Recorder);
   setGlobal('performance', { now: () => time }); setGlobal('setInterval', () => 1); setGlobal('clearInterval', () => {});
   delete require.cache[filename];
@@ -67,6 +70,17 @@ test('silence sends the current recording once; a later turn requires another ex
   button().props.onClick(); await flush(); render();
   assert.equal(microphones, 1);
   time = 2500; monitors[0].callback(); render();
+  assert.equal(recordings.length, 0, 'do not submit before the final audio chunk');
+  assert.equal(trackStops, 0, 'do not release tracks before recorder finalization');
+  assert.equal(button().props.disabled, true, 'cannot start a new capture while finalizing');
+  let latestCallbackUsed = false;
+  props.onRecorded = blob => { latestCallbackUsed = true; recordings.push(blob); };
+  props.onBusyChange = () => {};
+  render();
+  finalEvents.splice(0).forEach(deliver => deliver());
+  render();
+  assert.equal(latestCallbackUsed, true, 'use the current parent callback after async finalization');
+  assert.equal(trackStops, 1);
   assert.equal(recordings.length, 1);
   assert.ok(recordings[0] instanceof Blob);
   monitors[0].callback(); await flush();
@@ -77,5 +91,13 @@ test('silence sends the current recording once; a later turn requires another ex
   assert.equal(microphones, 2, 'user can explicitly start another turn');
   monitors[0].callback(); assert.equal(recordings.length, 1, 'old monitor cannot stop a new turn');
   time = 5000; button().props.onClick();
+  finalEvents.splice(0).forEach(deliver => deliver());
   assert.equal(recordings.length, 2, 'manual stop still submits');
+  render();
+  button().props.onClick(); await flush(); render();
+  time = 7500; monitors.at(-1).callback(); render();
+  props.disabled = true; render();
+  finalEvents.splice(0).forEach(deliver => deliver());
+  assert.equal(recordings.length, 2, 'cancelling while finalizing must not send a late recording');
+
 });

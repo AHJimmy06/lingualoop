@@ -37,7 +37,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 
 type VerifiedRequest = { verifiedIdentity?: { ownerId: string } };
 
-type SessionStore = Pick<LanguagePracticeSessionStore, 'createSession' | 'createCustomSession' | 'getSession' | 'finishSession'>;
+type SessionStore = Pick<LanguagePracticeSessionStore, 'createSession' | 'createCustomSession' | 'getSession' | 'finishSession' | 'listHistory'>;
 type TurnStore = Pick<LanguagePracticeTurnStore, 'listCompletedTurns'>;
 type ReportService = Pick<LanguagePracticeReportService, 'getOrCreate'>;
 
@@ -51,6 +51,21 @@ export class LanguagePracticeSessionController {
     @Inject(LANGUAGE_PRACTICE_REPORT_SERVICE) private readonly reports: ReportService,
     @Optional() @Inject(REPORT_LEARNING_SUPPORT_SERVICE) private readonly learningSupport?: Pick<ReportLearningSupportService, 'getCached' | 'getOrCreate'>,
   ) {}
+
+  @Get('history')
+  async history(@Req() request: VerifiedRequest & { query?: Record<string, unknown> },
+    @Res({ passthrough: true }) response: { setHeader(name: string, value: string): void }) {
+    response.setHeader('Cache-Control', 'private, no-store');
+    const query = request.query ?? {};
+    if (Object.keys(query).some(key => key !== 'offset') ||
+        (query.offset !== undefined && (typeof query.offset !== 'string' || !/^(0|[1-9][0-9]{0,5})$/.test(query.offset))))
+      throw new HttpException('Invalid history page.', 400);
+    const offset = Number(query.offset ?? 0);
+    if (offset > 100_000) throw new HttpException('Invalid history page.', 400);
+    if (!request.verifiedIdentity?.ownerId) throw new HttpException('Authentication service unavailable.', 503);
+    try { return await this.sessions.listHistory(request.verifiedIdentity.ownerId, offset); }
+    catch { throw new HttpException('Practice history is unavailable.', 503); }
+  }
 
   @Get('sessions/:sessionId/report/learning-support')
   async getReportLearningSupport(

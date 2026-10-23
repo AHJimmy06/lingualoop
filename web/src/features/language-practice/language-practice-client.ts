@@ -130,6 +130,11 @@ export type LanguagePracticeClientErrorKind =
   | 'invalid-response'
   | 'invalid-input'
 
+export type PracticeHistoryItem = { id: string; status: 'COMPLETED' | 'EXPIRED'; title: string | null;
+  topic: string; level: string; difficulty: PracticeDifficulty | null; durationMinutes: number;
+  startedAt: string; finishedAt: string; reportReady: boolean };
+export type PracticeHistoryPage = { sessions: PracticeHistoryItem[]; nextOffset: number | null };
+
 export class LanguagePracticeClientError extends Error {
   constructor(readonly kind: LanguagePracticeClientErrorKind, readonly status: number | null = null) {
     super(publicMessage(kind))
@@ -414,6 +419,28 @@ export class LanguagePracticeClient {
     return parseFinish(await this.readJson(response), sessionId)
   }
 
+  async getHistory(offset = 0): Promise<PracticeHistoryPage> {
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100_000) throw new LanguagePracticeClientError('invalid-input')
+    const response = await this.session.getWithRefresh(`/api/language-practice/history?offset=${offset}`)
+    if (!response) throw new LanguagePracticeClientError('unavailable')
+    if (!response.ok) throw responseError(response.status)
+    const value: unknown = await this.readJson(response)
+    if (!isRecord(value) || !hasExactKeys(value, ['sessions', 'nextOffset']) || !Array.isArray(value.sessions) || value.sessions.length > 20 ||
+        (value.nextOffset !== null && (value.nextOffset !== offset + 20 || value.sessions.length !== 20)))
+      throw new LanguagePracticeClientError('invalid-response')
+    const sessions = value.sessions.map((row: unknown) => {
+      if (!isRecord(row) || !hasExactKeys(row, ['id', 'status', 'title', 'topic', 'level', 'difficulty', 'durationMinutes', 'startedAt', 'finishedAt', 'reportReady']) ||
+          !isUuid(row.id) || !['COMPLETED', 'EXPIRED'].includes(row.status as string) ||
+          (row.title !== null && (typeof row.title !== 'string' || !row.title.trim() || row.title.length > 120)) ||
+          !isValidSetup({ topic: row.topic, level: row.level, durationMinutes: row.durationMinutes }) ||
+          (row.difficulty !== null && !isPracticeDifficulty(row.difficulty)) || !isTimestamp(row.startedAt) || !isTimestamp(row.finishedAt) ||
+          typeof row.reportReady !== 'boolean') throw new LanguagePracticeClientError('invalid-response')
+      return row as PracticeHistoryItem
+    })
+    if (new Set(sessions.map(row => row.id)).size !== sessions.length) throw new LanguagePracticeClientError('invalid-response')
+    return { sessions, nextOffset: value.nextOffset as number | null }
+  }
+
   getOrCreateReport(sessionId: string): Promise<LanguagePracticeReport> {
     this.validateUuid(sessionId)
     const pending = pendingReportRequests.get(sessionId)
@@ -427,6 +454,16 @@ export class LanguagePracticeClient {
     }
     void request.then(clear, clear)
     return request
+  }
+
+  /** Finish-page loading is atomic from the learner's perspective: never expose half a report. */
+  async getCompleteReport(sessionId: string): Promise<{ report: LanguagePracticeReport; session: SessionDetail; learningSupport: ReportLearningSupport }> {
+    const [report, session] = await Promise.all([this.getOrCreateReport(sessionId), this.getSession(sessionId)])
+    // An empty session has no evidence to enrich, and must never trigger a paid generation.
+    const learningSupport = session.turns.length === 0
+      ? { corrections: [], strengths: [], recommendations: [] }
+      : await this.getCachedReportLearningSupport(sessionId) ?? await this.prepareReportLearningSupport(sessionId)
+    return { report, session, learningSupport }
   }
 
   async getCachedReportLearningSupport(sessionId: string): Promise<ReportLearningSupport | null> {
