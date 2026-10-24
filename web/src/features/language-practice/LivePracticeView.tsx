@@ -46,6 +46,7 @@ export function LivePracticeView() {
   const [clock, setClock] = useState({ now: 0, anchor: null as TimerAnchor | null });
   const [refreshVersion, setRefreshVersion] = useState(0);
   const audioElement = useRef<HTMLAudioElement>(null);
+  const conversationHistoryRef = useRef<HTMLOListElement>(null);
   const sessionRef = useRef(session);
   const controllerRef = useRef(turnController);
   const requestInFlight = useRef<string | null>(null);
@@ -60,6 +61,13 @@ export function LivePracticeView() {
   const remainingMs = clock.anchor ? projectRemainingMs(clock.anchor, clock.now) : 0;
   const remainingSeconds = Math.ceil(remainingMs / 1000);
   const active = session?.status === 'ACTIVE' && remainingMs > 0;
+  const latestTurn = session?.turns[session.turns.length - 1];
+  useEffect(() => {
+    const history = conversationHistoryRef.current;
+    // Scroll this panel only; never steal keyboard focus or move the whole page.
+    if (history) history.scrollTop = history.scrollHeight;
+  }, [sessionId, latestTurn?.sequence, latestTurn?.transcript, latestTurn?.assistantResponse]);
+
 
   const navigateToCompletion = useCallback((id: string) => {
     if (navigatingToCompletion.current) return;
@@ -268,9 +276,24 @@ export function LivePracticeView() {
     }
   };
 
+  const sessionActions = <>
+    <div className="group relative shrink-0">
+      <Button type="button" variant="outline" size="icon" className="size-12 rounded-xl" aria-label="Refresh session" aria-describedby="refresh-session-help" disabled={refreshing || turnController.pending !== null} onClick={() => void loadSession()}>
+        <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5" /><path d="M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1" /></svg>
+      </Button>
+      <span id="refresh-session-help" role="tooltip" className="pointer-events-none absolute right-0 bottom-full z-20 mb-2 hidden whitespace-nowrap rounded-lg bg-slate-950 px-3 py-2 text-xs text-white shadow-lg group-hover:block group-focus-within:block">{refreshing ? 'Refreshing session...' : 'Refresh session'}</span>
+    </div>
+    <div className="group relative shrink-0">
+      <Button type="button" size="icon" className="size-12 rounded-xl" aria-label="Finish practice" aria-describedby="finish-practice-help" disabled={!active || turnController.pending !== null || submitting || finishing || recorderBusy} onClick={() => void finishPractice()}>
+        <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 21V3M5 3h14l-3 5 3 5H5" /></svg>
+      </Button>
+      <span id="finish-practice-help" role="tooltip" className="pointer-events-none absolute right-0 bottom-full z-20 mb-2 hidden whitespace-nowrap rounded-lg bg-slate-950 px-3 py-2 text-xs text-white shadow-lg group-hover:block group-focus-within:block">{finishing ? 'Finishing practice...' : 'Finish practice'}</span>
+    </div>
+  </>;
+
   return (
-    <main className="authenticated-page min-h-svh [overflow-wrap:anywhere] md:flex md:flex-col" aria-labelledby="session-title">
-      <header className="mb-6 flex items-start justify-between gap-3 sm:mb-8">
+    <main className="authenticated-page live-practice-page min-h-svh [overflow-wrap:anywhere] md:flex md:flex-col" aria-labelledby="session-title">
+      <header className="mb-3 flex items-start justify-between gap-3 sm:mb-4">
         <div>
           <p className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-primary">Timed English practice</p>
           <h1 id="session-title" className="text-2xl font-semibold tracking-tight sm:text-3xl">Your conversation</h1>
@@ -287,15 +310,15 @@ export function LivePracticeView() {
         <Link className="w-fit text-sm font-medium text-primary underline underline-offset-4" to="/language-practice">Return to setup</Link>
       </section>}
       {session && <>
-        <section className="mb-6 flex flex-wrap gap-x-5 gap-y-2 text-sm" aria-label="Session details">
+        <section className="mb-3 flex flex-wrap gap-x-5 gap-y-2 text-sm" aria-label="Session details">
           <p><strong>Level</strong> <span className="text-muted-foreground">{session.level}</span></p>
           <p><strong>Topic</strong> <span className="text-muted-foreground">{topicLabels[session.topic] || session.topic}</span></p>
           <p><strong>Duration</strong> <span className="text-muted-foreground">{session.durationMinutes} minutes</span></p>
           <p><strong>Task difficulty</strong> <span className="text-muted-foreground">{difficultyLabel(session.difficulty)}</span></p>
         </section>
 
-        <div className="grid grid-cols-1 items-start gap-4 md:flex-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:grid-rows-[auto_auto_1fr] md:gap-x-6">
-        <div className="min-w-0 [&>section]:mb-0 md:col-start-1 md:row-start-1 md:row-span-3 md:self-center">
+        <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:flex-1 md:content-center md:items-stretch md:gap-x-6">
+        <div className="min-w-0 [&>section]:mb-0 md:h-[var(--live-panel-height)] md:[&>section]:h-full md:[&>section>div]:h-full md:[&>section>div]:min-h-0">
         <PracticeScene
           topic={session.topic}
           learnerState={learnerSpeaking ? 'speaking' : partnerSpeaking ? 'listening' : 'idle'}
@@ -303,11 +326,17 @@ export function LivePracticeView() {
         />
         </div>
 
-        <section aria-labelledby="conversation-title" className="flex h-[clamp(18rem,45svh,32rem)] min-h-0 min-w-0 flex-col rounded-2xl border bg-card/90 p-4 shadow-sm md:col-start-2 md:row-start-1">
-          <h2 id="conversation-title" className="mb-4 shrink-0 text-lg font-semibold">Conversation so far</h2>
-          {session.turns.length === 0
-            ? <p className="py-3 text-sm text-muted-foreground">Your completed conversation turns will appear here.</p>
-            : <ol tabIndex={0} aria-label="Conversation history" className="grid min-h-0 flex-1 content-start gap-5 overflow-y-auto overscroll-contain pr-2">
+        <section aria-labelledby="conversation-title" className="flex h-[clamp(18rem,45svh,32rem)] min-h-0 min-w-0 flex-col rounded-2xl border bg-card/90 p-4 shadow-sm md:h-[var(--live-panel-height)] md:col-start-2 md:row-start-1">
+          <div className="mb-4 flex shrink-0 items-center gap-2">
+            <h2 id="conversation-title" className="text-lg font-semibold">Conversation so far</h2>
+            <div className="group relative">
+              <Button type="button" variant="ghost" size="icon" className="size-8 rounded-full text-muted-foreground" aria-label="About conversation history" aria-describedby="conversation-help">
+                <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7h.01" /></svg>
+              </Button>
+              <span id="conversation-help" role="tooltip" className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-56 -translate-x-1/2 rounded-lg bg-slate-950 px-3 py-2 text-xs leading-5 text-white shadow-lg group-hover:block group-focus-within:block">Your completed conversation turns will appear here.</span>
+            </div>
+          </div>
+          <ol ref={conversationHistoryRef} tabIndex={0} aria-label="Conversation history" className="grid min-h-0 flex-1 content-start gap-5 overflow-y-auto overscroll-contain pr-2">
               {session.turns.map((turn, index) => <li key={turn.sequence} className="min-w-0">
                 <p className="mb-3 text-xs font-medium text-muted-foreground">Turn {turn.sequence}</p>
                 <MessageGroup className="gap-3">
@@ -319,34 +348,21 @@ export function LivePracticeView() {
                   </Message>
                 </MessageGroup>
               </li>)}
-            </ol>}
-        </section>
-
-        <section className="grid min-w-0 justify-items-center gap-4 border-t py-6 md:col-start-2 md:row-start-2" aria-label="Voice turn controls">
-          {!turnController.pending && <p className="max-w-md text-center text-sm leading-6 text-muted-foreground">{active
-              ? 'When you are ready, record your response.'
-              : 'This session has expired. You can no longer record a new turn.'}</p>}
-          {!turnController.pending && <PracticeRecorder key={sessionId} disabled={!active} onRecorded={onRecorded} onBusyChange={onRecorderBusyChange} onRecordingChange={onRecordingChange} />}
-          {turnController.pending && <Button type="button" variant="outline" disabled={submitting} onClick={() => void checkSameTurn(false)}>
+            </ol>
+        <section className="mt-4 grid min-w-0 shrink-0 justify-items-center gap-3 border-t pt-4 pb-1" aria-label="Voice turn controls">
+          {!turnController.pending && !active && <p className="max-w-md text-center text-sm leading-6 text-muted-foreground">This session has expired. You can no longer record a new turn.</p>}
+          {!turnController.pending && <PracticeRecorder key={sessionId} disabled={!active} onRecorded={onRecorded} onBusyChange={onRecorderBusyChange} onRecordingChange={onRecordingChange} actions={sessionActions} />}
+          {turnController.pending && <div className="flex w-full items-center justify-center gap-2"><Button type="button" variant="outline" disabled={submitting} onClick={() => void checkSameTurn(false)}>
             {submitting ? 'Checking…' : 'Check for response'}
-          </Button>}
+          </Button>{sessionActions}</div>}
+          {error && <p className="text-center text-sm text-destructive" role="alert">{error}</p>}
           {turnStatus && !turnController.pending && <p className="max-w-lg text-center text-sm text-muted-foreground" role="status">{turnStatus}</p>}
           {audioUrl && <>
             <audio ref={audioElement} src={audioUrl} preload="none" hidden />
             {playbackError && <p className="text-center text-sm text-muted-foreground" role="status">{playbackError}</p>}
           </>}
         </section>
-        <div className="min-w-0 md:col-start-2 md:row-start-3">
-        {error && <p className="mb-4 text-sm text-destructive" role="alert">{error}</p>}
-        <div className="flex flex-wrap gap-3">
-          <Button type="button" variant="outline" disabled={refreshing || turnController.pending !== null} onClick={() => void loadSession()}>
-            {refreshing ? 'Refreshing…' : 'Refresh session'}
-          </Button>
-          <Button type="button" disabled={!active || turnController.pending !== null || submitting || finishing || recorderBusy} onClick={() => void finishPractice()}>
-            {finishing ? 'Finishing…' : 'Finish practice'}
-          </Button>
-        </div>
-        </div>
+        </section>
         </div>
       </>}
     </main>

@@ -67,6 +67,14 @@ test('silence sends the current recording once; a later turn requires another ex
   });
   render();
   assert.equal(microphones, 0, 'no recording begins on mount');
+  const initial = nodes(render());
+  const startButton = initial.find(node => node.type === 'Button');
+  assert.ok(nodes(startButton).some(node => node.type === 'svg'), 'record action has microphone icon');
+  assert.ok(nodes(startButton).some(node => node.type === 'kbd' && node.props.children === 'Space'));
+  const hint = initial.find(node => node.props.role === 'tooltip');
+  assert.equal(startButton.props['aria-describedby'], hint.props.id);
+  assert.match(hint.props.children, /When you are ready.*Press Space/);
+
   button().props.onClick(); await flush(); render();
   assert.equal(microphones, 1);
   time = 2500; monitors[0].callback(); render();

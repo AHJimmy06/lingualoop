@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { selectSupportedAudioMimeType } from '../../practice-audio';
 import { Button } from '../../components/ui/button';
 import {
@@ -12,6 +12,7 @@ import { monitorRecordingSilence, type RecordingSilenceMonitor } from './recordi
 
 type PracticeRecorderProps = {
   disabled?: boolean;
+  actions?: ReactNode;
   onRecorded: (blob: Blob) => void;
   onBusyChange?: (busy: boolean) => void;
   onRecordingChange?: (recording: boolean) => void;
@@ -19,7 +20,7 @@ type PracticeRecorderProps = {
 
 const failureMessage = 'Recording could not be completed. Please try again.';
 
-export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, onRecordingChange }: PracticeRecorderProps) {
+export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, onRecordingChange, actions }: PracticeRecorderProps) {
   const [recording, setRecording] = useState(false);
   const [starting, setStarting] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
@@ -214,17 +215,30 @@ export function PracticeRecorder({ disabled = false, onRecorded, onBusyChange, o
   }, [recording, starting]);
 
   return (
-    <div className="grid justify-items-center gap-2 text-center">
+    <div className="grid w-full min-w-0 justify-items-center gap-2 text-center">
+      <div className="flex w-full items-center justify-center gap-2">
+      <div className="group relative w-full min-w-0 max-w-xs">
       <Button
         type="button"
         size="lg"
         className={`min-h-12 w-full max-w-xs touch-manipulation ${recording ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90' : ''}`}
         disabled={disabled || starting || finalizing}
         onClick={recording ? stop : () => void start()}
+        aria-describedby="recording-help"
         aria-label={finalizing ? 'Finishing recording' : recording ? 'Stop recording' : starting ? 'Starting microphone' : 'Start recording'}
       >
-        {finalizing ? 'Finishing recording...' : recording ? 'Stop recording' : starting ? 'Starting microphone…' : disabled ? 'Recording unavailable' : 'Start recording'}
+        <svg className="size-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8" /></svg>
+        <span className="min-w-0 truncate">{finalizing ? 'Finishing recording...' : recording ? 'Stop recording' : starting ? 'Starting microphone...' : disabled ? 'Recording unavailable' : 'Start recording'}</span>
+        {!starting && !finalizing && !disabled && <kbd aria-hidden="true" className="ml-1 hidden shrink-0 rounded border border-current/30 px-1.5 py-0.5 font-sans text-[10px] leading-none opacity-80 sm:inline-flex">Space</kbd>}
+
       </Button>
+      <span id="recording-help" role="tooltip" className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 hidden w-64 max-w-[calc(100vw-3rem)] -translate-x-1/2 rounded-lg bg-slate-950 px-3 py-2 text-xs leading-5 text-white shadow-lg group-hover:block group-focus-within:block">{disabled
+        ? 'Recording is unavailable for this session.'
+        : recording ? 'Press Space or click to stop recording and send your response.'
+        : 'When you are ready, record your response. Press Space when no other control is focused, or click the microphone to start.'}</span>
+      </div>
+      {actions}
+      </div>
       {(starting || recording) && <p className="text-sm text-muted-foreground" role="status" aria-live="polite">
         {recording ? `Recording… ${formatRecordingTime(elapsedMs)} / 0:20` : 'Starting…'}
       </p>}

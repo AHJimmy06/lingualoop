@@ -48,7 +48,7 @@ test('wide scene keeps a substantial stage with filling artwork and minimal padd
   assert.doesNotMatch(background.props.className, /object-contain|object-fill/);
   assert.doesNotMatch(scene.props.className, /(?:^|\s)(?:border(?:-\S+)?|bg-\S+|p[trblxy]?-\S+)(?:\s|$)/);
   const padding = stage.props.className.split(/\s+/).filter(token => /(?:^|:)p[trblxy]?-/.test(token));
-  assert.deepEqual(padding, ['px-2', 'pt-2'], 'stage padding is at most eight pixels without responsive inflation');
+  assert.deepEqual(padding, ['px-2', 'pt-2', 'pb-6', 'sm:pb-8'], 'bottom breathing room raises the figures without shrinking the stage');
   assert.doesNotMatch(stage.props.className, /bg-|from-|via-|to-|(?:^|:)gap-(?:6|8|12)/);
   assert.match(stage.props.className, /min-h-52/);
   assert.match(stage.props.className, /sm:min-h-64/);
@@ -58,7 +58,7 @@ test('wide scene keeps a substantial stage with filling artwork and minimal padd
     const image = figureImage(figure);
     assert.match(image.props.className, /object-contain/);
     assert.match(image.props.className, /lg:h-\[clamp\(10rem,24svh,20rem\)\]/);
-    assert.match(image.props.className, /lg:w-full/);
+    assert.match(image.props.className, /lg:w-\[clamp\(8rem,19\.2svh,16rem\)\]/);
   }
 });
 
@@ -141,10 +141,11 @@ test('reserved normal-flow status slots keep idle and active participant geometr
         assert.deepEqual(idle.props.children.map((child) => child.type), ['div', 'img', 'span', 'span']);
         const slot = figure.props.children[0];
         assert.equal(slot.props.className, idle.props.children[0].props.className);
-        assert.match(slot.props.className, /\bh-10\b/);
-        assert.match(slot.props.className, /\bsm:h-12\b/);
+        assert.match(slot.props.className, /\bh-9\b/);
+        assert.match(slot.props.className, /\bsm:h-10\b/);
         assert.match(slot.props.className, /\bshrink-0\b/);
-        assert.match(slot.props.className, /\bflex\b.*\bitems-start\b.*\bjustify-center\b/);
+        assert.match(slot.props.className, /\bflex\b.*\bitems-end\b/);
+        assert.ok(slot.props.className.includes('justify-center'));
         assert.doesNotMatch(slot.props.className, /absolute|fixed|overflow-hidden/);
         for (const indicator of slot.props.children.filter(Boolean)) {
           assert.doesNotMatch(indicator.props.className, /absolute|fixed|bottom-|top-|translate/);
@@ -162,4 +163,30 @@ test('local partner asset identifies a robot teacher and retains the illustratio
   assert.match(asset, /viewBox="0 0 160 200"/);
   assert.match(asset, /<title[^>]*>Robot teacher<\/title>/);
   assert.doesNotMatch(asset, /<(?:script|image)\b|https?:\/\/(?!www\.w3\.org\/2000\/svg)/);
+});
+
+test('figures remain toward outer corners while indicators stay centered above their own figure', () => {
+  const scene = PracticeScene({ topic: 'travel', partnerState: 'speaking', learnerState: 'listening' });
+  const [partner, learner] = participants(scene);
+  assert.match(partner.props.className, /items-start/);
+  assert.match(learner.props.className, /items-end/);
+  assert.match(figureImage(partner).props.className, /object-center/);
+  assert.match(figureImage(learner).props.className, /object-center/);
+  assert.match(partner.props.children[0].props.className, /justify-center/);
+  assert.match(learner.props.children[0].props.className, /justify-center/);
+  assert.match(scene.props.children[1].props.className, /pb-6.*sm:pb-8/);
+});
+
+test('indicator and figure use equal responsive widths so they cannot drift to scene center', () => {
+  for (const state of ['idle', 'speaking', 'listening']) {
+    const scene = PracticeScene({ topic: 'travel', learnerState: state, partnerState: state });
+    for (const participant of participants(scene)) {
+      const slot = participant.props.children[0];
+      const image = figureImage(participant);
+      const widths = classes => classes.split(/\s+/).filter(value => /^(?:sm:|lg:)?w-/.test(value));
+      assert.deepEqual(widths(slot.props.className), widths(image.props.className));
+      assert.match(slot.props.className, /items-end.*justify-center.*pb-1/);
+      assert.doesNotMatch(slot.props.className, /w-full|justify-start|justify-end/);
+    }
+  }
 });

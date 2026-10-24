@@ -13,6 +13,12 @@
     linear-gradient(180deg, #f5fbfa 0%, #f6f8fb 48%, #f0f5f8 100%);
 }
 
+/* Compact live sessions without changing spacing on other authenticated pages. */
+.live-practice-page {
+  padding-block: 0.75rem;
+  --live-panel-height: clamp(18rem, calc(100svh - 10rem), 56rem);
+}
+
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: 'Inter Variable', sans-serif;
