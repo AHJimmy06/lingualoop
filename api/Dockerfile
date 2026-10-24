@@ -1,3 +1,11 @@
+# Keep the standalone C++ CLI: PiperHost uses its persistent JSONL protocol.
+FROM node:24-bookworm-slim AS piper
+ARG TARGETARCH
+COPY scripts/install-piper.sh /tmp/install-piper.sh
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && sh /tmp/install-piper.sh "$TARGETARCH" \
+    && rm -rf /var/lib/apt/lists/*
+
 FROM node:24-bookworm-slim AS build
 WORKDIR /app
 
@@ -34,8 +42,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 python3
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/dist ./dist
+ENV LANGUAGE_PRACTICE_PIPER_PATH=/opt/piper/piper
+COPY --from=piper /opt/piper /opt/piper
+# Verify the executable and its bundled shared libraries in the final image.
+RUN /opt/piper/piper --help >/dev/null 2>&1
 COPY db/migrations ./db/migrations
 COPY scripts/whisper-stt-server.py ./scripts/whisper-stt-server.py
+COPY scripts/piper-smoke.cjs ./scripts/piper-smoke.cjs
 VOLUME ["/models"]
 
 EXPOSE 5000
