@@ -10,7 +10,7 @@ services:
     stop_grace_period: 20s
     environment:
       PORT: "5000"
-      LINGUALOOP_WEB_ORIGIN: ${LINGUALOOP_WEB_ORIGIN:?Set the address used to open the app, e.g. http://10.102.100.188}
+      LINGUALOOP_WEB_ORIGIN: ${LINGUALOOP_WEB_ORIGIN:?Set the public HTTPS origin used to open the app}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_CALLBACK_URL: ${GOOGLE_CALLBACK_URL:-}
@@ -30,8 +30,23 @@ services:
       LINGUALOOP_STT_PYTHON: /opt/lingualoop-stt/bin/python
       HF_HOME: /models/huggingface
       LANGUAGE_PRACTICE_FFMPEG_PATH: /usr/local/bin/ffmpeg
+      LANGUAGE_PRACTICE_PIPER_PATH: /opt/piper/piper
+      LANGUAGE_PRACTICE_PIPER_MODEL_EN: /models/piper/en.onnx
+      LANGUAGE_PRACTICE_PIPER_MODEL_ES: /models/piper/es.onnx
+      LINGUALOOP_PIPER_MODEL_EN_SHA256: ${LINGUALOOP_PIPER_MODEL_EN_SHA256:?Set the trusted English model SHA256}
+      LINGUALOOP_PIPER_SIDECAR_EN_SHA256: ${LINGUALOOP_PIPER_SIDECAR_EN_SHA256:?Set the trusted English config SHA256}
+      LINGUALOOP_PIPER_MODEL_ES_SHA256: ${LINGUALOOP_PIPER_MODEL_ES_SHA256:?Set the trusted Spanish model SHA256}
+      LINGUALOOP_PIPER_SIDECAR_ES_SHA256: ${LINGUALOOP_PIPER_SIDECAR_ES_SHA256:?Set the trusted Spanish config SHA256}
     volumes:
       - lingualoop-whisper-model-cache:/models
+      # Dedicated voice directory only; Z labels this path for SELinux at deploy.
+      - type: bind
+        source: ${LINGUALOOP_PIPER_MODELS_DIR:?Set the absolute server Piper models directory}
+        target: /models/piper
+        read_only: true
+        bind:
+          create_host_path: false
+          selinux: Z
     networks:
       - lingualoop-postgres-net
     healthcheck:
