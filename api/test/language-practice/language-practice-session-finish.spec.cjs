@@ -15,6 +15,13 @@ function storeFor(responses) {
   return {
     calls,
     store: new LanguagePracticeSessionStore({
+      async withTransaction(callback) {
+        return callback({ query: (sql, parameters) => {
+          if (sql.includes('FOR UPDATE')) return { rows: [{ id: SESSION }] };
+          if (sql.includes('DELETE FROM')) return { rows: [] };
+          return this.query(sql, parameters);
+        } });
+      },
       async query(sql, parameters) {
         calls.push({ sql, parameters });
         const response = responses.shift();
@@ -29,7 +36,7 @@ const closedRow = { id: SESSION, status: 'COMPLETED' };
 
 test('completed session detail normalizes remaining time to zero while active time is preserved', async () => {
   const baseRow = {
-    id: SESSION, level: 'B1', topic: 'travel', durationMinutes: 10,
+    id: SESSION, difficulty: null, level: 'B1', topic: 'travel', durationMinutes: 10,
     startedAt: new Date('2026-09-24T12:00:00.000Z'), expiresAt: new Date('2026-09-24T12:10:00.000Z'),
     remainingMs: 42_000,
   };
@@ -94,4 +101,27 @@ test('concurrent finish/turn reservation safety is encoded as a conditional sess
   assert.match(sql, /active_turn_lease_token\s+IS\s+NULL/i);
   assert.match(sql, /status\s*=\s*'ACTIVE'/i);
   assert.match(sql, /RETURNING\s+id,\s*status/i);
+});
+
+
+test('empty owned session is discarded under the turn lock, never completed or reported', async () => {
+  const calls = [];
+  const executor = { async withTransaction(callback) { return callback(this); }, async query(sql, values) {
+    calls.push({sql, values});
+    return {rows: [{id: SESSION}]};
+  }};
+  assert.deepEqual(await new LanguagePracticeSessionStore(executor).finishSession(OWNER, SESSION), {id: SESSION, status: 'DISCARDED'});
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].sql, /FOR UPDATE/);
+  assert.match(calls[1].sql, /DELETE FROM/);
+  assert.match(calls[1].sql, /active_turn_lease_token IS NULL/);
+  assert.match(calls[1].sql, /NOT EXISTS[\s\S]*t.status = 'COMPLETED'/);
+  for (const call of calls) assert.deepEqual(call.values, [OWNER, SESSION]);
+});
+
+test('missing or foreign session cannot be discarded', async () => {
+  let calls = 0;
+  const executor = {async withTransaction(callback) { return callback(this); }, async query() { calls++; return {rows: []}; }};
+  assert.equal(await new LanguagePracticeSessionStore(executor).finishSession(OTHER_OWNER, SESSION), null);
+  assert.equal(calls, 1);
 });

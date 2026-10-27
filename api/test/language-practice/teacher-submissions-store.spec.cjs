@@ -43,12 +43,20 @@ test('teacher reads only existing immutable report through bound practice owners
 });
 test('successful explicit finish stamps completion once; expiry is not a completion timestamp', async () => {
   let sqlSeen;
-  const store = new LanguagePracticeSessionStore({ async query(sql) { sqlSeen = sql; return { rows: [{ id: S, status: 'COMPLETED' }] }; } });
+  const store = new LanguagePracticeSessionStore({ async withTransaction(callback) { return callback({query: (sql, values) => {
+    if (sql.includes('FOR UPDATE')) return {rows: [{id: S}]};
+    if (sql.includes('DELETE FROM')) return {rows: []};
+    return this.query(sql, values);
+  }}); }, async query(sql) { sqlSeen = sql; return { rows: [{ id: S, status: 'COMPLETED' }] }; } });
   await store.finishSession(A, S);
   assert.match(sqlSeen, /completed_at = COALESCE\(completed_at, clock_timestamp\(\)\)/);
   assert.match(sqlSeen, /status = 'ACTIVE'/);
   const calls = [];
-  const legacy = new LanguagePracticeSessionStore({ async query(sql) {
+  const legacy = new LanguagePracticeSessionStore({ async withTransaction(callback) { return callback({query: (sql, values) => {
+    if (sql.includes('FOR UPDATE')) return {rows: [{id: S}]};
+    if (sql.includes('DELETE FROM')) return {rows: []};
+    return this.query(sql, values);
+  }}); }, async query(sql) {
     calls.push(sql);
     return { rows: sql.includes('UPDATE') ? [] : [{ id: S, status: 'ACTIVE', activeTurnLeaseToken: null, elapsed: true }] };
   } });

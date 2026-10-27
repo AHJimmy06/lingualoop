@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Volume2 } from 'lucide-react';
+import { Volume2, ClipboardList, X, LogOut } from 'lucide-react';
+import { Dialog } from '@base-ui/react/dialog';
 import { authSession } from '../../auth-session';
 import { Button } from '../../components/ui/button';
 import { Bubble, BubbleContent } from '../../components/ui/bubble';
@@ -15,7 +16,7 @@ import { anchorTimer, projectRemainingMs, type TimerAnchor } from './live-sessio
 import { LiveTurnController } from './react-live-turn';
 import { onRecordingActivity, ResponseAudioPlayback, ResponseAudioUrls } from './react-live-audio';
 import { PracticeRecorder } from './PracticeRecorder';
-import { PracticeScene } from './PracticeScene';
+import { SessionPracticeImage } from './SessionPracticeImage';
 import { difficultyLabel } from './practice-preferences';
 
 const topicLabels: Record<string, string> = {
@@ -60,7 +61,10 @@ export function LivePracticeView() {
 
   const remainingMs = clock.anchor ? projectRemainingMs(clock.anchor, clock.now) : 0;
   const remainingSeconds = Math.ceil(remainingMs / 1000);
-  const active = session?.status === 'ACTIVE' && remainingMs > 0;
+  const recorderBusyRef = useRef(recorderBusy);
+  recorderBusyRef.current = recorderBusy;
+  const singleResponse = session?.activity?.mode === 'single-response';
+  const active = session?.status === 'ACTIVE' && (remainingMs > 0 || recorderBusy);
   const latestTurn = session?.turns[session.turns.length - 1];
   useEffect(() => {
     const history = conversationHistoryRef.current;
@@ -76,7 +80,7 @@ export function LivePracticeView() {
   }, [navigate]);
 
   const loadSession = useCallback(async () => {
-    if (requestInFlight.current === sessionId || controllerRef.current.pending) return;
+    if (requestInFlight.current === sessionId || controllerRef.current.pending || recorderBusyRef.current) return;
     requestInFlight.current = sessionId;
     setRefreshing(true);
     if (!sessionRef.current) setLoading(true);
@@ -151,7 +155,7 @@ export function LivePracticeView() {
   }, [loadSession]);
 
   useEffect(() => {
-    if (session?.status === 'ACTIVE' && remainingMs === 0 && !expiryCheckRequested.current && !turnController.pending) {
+    if (session?.status === 'ACTIVE' && remainingMs === 0 && !expiryCheckRequested.current && !turnController.pending && !recorderBusyRef.current) {
       expiryCheckRequested.current = true;
       void loadSession();
     }
@@ -261,6 +265,10 @@ export function LivePracticeView() {
     try {
       const result = await client.finishSession(requestedSessionId);
       if (sessionIdRef.current !== requestedSessionId) return;
+      if (result.id === requestedSessionId && result.status === 'DISCARDED') {
+        navigate('/language-practice', { replace: true });
+        return;
+      }
       if (result.id === requestedSessionId && (result.status === 'COMPLETED' || result.status === 'EXPIRED')) {
         navigateToCompletion(requestedSessionId);
       }
@@ -278,16 +286,16 @@ export function LivePracticeView() {
 
   const sessionActions = <>
     <div className="group relative shrink-0">
-      <Button type="button" variant="outline" size="icon" className="size-12 rounded-xl" aria-label="Refresh session" aria-describedby="refresh-session-help" disabled={refreshing || turnController.pending !== null} onClick={() => void loadSession()}>
+      <Button type="button" variant="outline" size="icon" className="size-12 rounded-xl" aria-label="Refresh session" aria-describedby="refresh-session-help" disabled={refreshing || finishing || turnController.pending !== null} onClick={() => void loadSession()}>
         <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5" /><path d="M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1" /></svg>
       </Button>
       <span id="refresh-session-help" role="tooltip" className="pointer-events-none absolute right-0 bottom-full z-20 mb-2 hidden whitespace-nowrap rounded-lg bg-slate-950 px-3 py-2 text-xs text-white shadow-lg group-hover:block group-focus-within:block">{refreshing ? 'Refreshing session...' : 'Refresh session'}</span>
     </div>
     <div className="group relative shrink-0">
-      <Button type="button" size="icon" className="size-12 rounded-xl" aria-label="Finish practice" aria-describedby="finish-practice-help" disabled={!active || turnController.pending !== null || submitting || finishing || recorderBusy} onClick={() => void finishPractice()}>
-        <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 21V3M5 3h14l-3 5 3 5H5" /></svg>
+      <Button type="button" size="icon" className="size-12 rounded-xl" aria-label={session?.turns.length === 0 ? 'Exit practice' : 'Finish practice'} aria-describedby="finish-practice-help" disabled={!active || turnController.pending !== null || submitting || finishing || recorderBusy} onClick={() => void finishPractice()}>
+        {session?.turns.length === 0 ? <LogOut className="size-5" aria-hidden="true" /> : <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 21V3M5 3h14l-3 5 3 5H5" /></svg>}
       </Button>
-      <span id="finish-practice-help" role="tooltip" className="pointer-events-none absolute right-0 bottom-full z-20 mb-2 hidden whitespace-nowrap rounded-lg bg-slate-950 px-3 py-2 text-xs text-white shadow-lg group-hover:block group-focus-within:block">{finishing ? 'Finishing practice...' : 'Finish practice'}</span>
+      <span id="finish-practice-help" role="tooltip" className="pointer-events-none absolute right-0 bottom-full z-20 mb-2 hidden whitespace-nowrap rounded-lg bg-slate-950 px-3 py-2 text-xs text-white shadow-lg group-hover:block group-focus-within:block">{finishing ? 'Leaving practice...' : session?.turns.length === 0 ? 'Exit practice � discard without a report' : 'Finish practice'}</span>
     </div>
   </>;
 
@@ -295,10 +303,10 @@ export function LivePracticeView() {
     <main className="authenticated-page live-practice-page min-h-svh [overflow-wrap:anywhere] md:flex md:flex-col" aria-labelledby="session-title">
       <header className="mb-3 flex items-start justify-between gap-3 sm:mb-4">
         <div>
-          <p className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-primary">Timed English practice</p>
-          <h1 id="session-title" className="text-2xl font-semibold tracking-tight sm:text-3xl">Your conversation</h1>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-primary">{singleResponse ? 'Independent speaking assessment' : 'Timed English practice'}</p>
+          <h1 id="session-title" className="text-2xl font-semibold tracking-tight sm:text-3xl">{singleResponse ? 'Your independent response' : 'Your conversation'}</h1>
         </div>
-        {session && <div className="shrink-0 rounded-full bg-secondary px-3 py-1.5 text-lg font-semibold tabular-nums" role="timer" aria-label="Time remaining">
+        {session && !singleResponse && <div className="shrink-0 rounded-full bg-secondary px-3 py-1.5 text-lg font-semibold tabular-nums" role="timer" aria-label="Time remaining">
           {Math.floor(remainingSeconds / 60)}:{String(remainingSeconds % 60).padStart(2, '0')}
         </div>}
       </header>
@@ -313,13 +321,15 @@ export function LivePracticeView() {
         <section className="mb-3 flex flex-wrap gap-x-5 gap-y-2 text-sm" aria-label="Session details">
           <p><strong>Level</strong> <span className="text-muted-foreground">{session.level}</span></p>
           <p><strong>Topic</strong> <span className="text-muted-foreground">{topicLabels[session.topic] || session.topic}</span></p>
-          <p><strong>Duration</strong> <span className="text-muted-foreground">{session.durationMinutes} minutes</span></p>
+          {singleResponse ? <p><strong>Recording safety limit</strong> <span className="text-muted-foreground">10 minutes · stop manually</span></p> : <p><strong>Duration</strong> <span className="text-muted-foreground">{session.durationMinutes} minutes</span></p>}
           <p><strong>Task difficulty</strong> <span className="text-muted-foreground">{difficultyLabel(session.difficulty)}</span></p>
         </section>
 
         <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:flex-1 md:content-center md:items-stretch md:gap-x-6">
         <div className="min-w-0 [&>section]:mb-0 md:h-[var(--live-panel-height)] md:[&>section]:h-full md:[&>section>div]:h-full md:[&>section>div]:min-h-0">
-        <PracticeScene
+        <SessionPracticeImage
+          key={sessionId}
+          sessionId={sessionId}
           topic={session.topic}
           learnerState={learnerSpeaking ? 'speaking' : partnerSpeaking ? 'listening' : 'idle'}
           partnerState={partnerSpeaking ? 'speaking' : learnerSpeaking ? 'listening' : 'idle'}
@@ -328,12 +338,36 @@ export function LivePracticeView() {
 
         <section aria-labelledby="conversation-title" className="flex h-[clamp(18rem,45svh,32rem)] min-h-0 min-w-0 flex-col rounded-2xl border bg-card/90 p-4 shadow-sm md:h-[var(--live-panel-height)] md:col-start-2 md:row-start-1">
           <div className="mb-4 flex shrink-0 items-center gap-2">
-            <h2 id="conversation-title" className="text-lg font-semibold">Conversation so far</h2>
+            <h2 id="conversation-title" className="text-lg font-semibold">{singleResponse ? 'Your submitted response' : 'Conversation so far'}</h2>
             <div className="group relative">
               <Button type="button" variant="ghost" size="icon" className="size-8 rounded-full text-muted-foreground" aria-label="About conversation history" aria-describedby="conversation-help">
                 <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7h.01" /></svg>
               </Button>
               <span id="conversation-help" role="tooltip" className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-56 -translate-x-1/2 rounded-lg bg-slate-950 px-3 py-2 text-xs leading-5 text-white shadow-lg group-hover:block group-focus-within:block">Your completed conversation turns will appear here.</span>
+            </div>
+            <div className="ml-auto shrink-0">
+              <Dialog.Root key={sessionId}>
+                <span className="group relative inline-flex">
+                  <Dialog.Trigger render={<Button type="button" variant="ghost" size="icon" className="size-9 rounded-lg" />} aria-label="Requirements" aria-describedby="requirements-tooltip">
+                    <ClipboardList className="size-5" aria-hidden="true" />
+                  </Dialog.Trigger>
+                  <span id="requirements-tooltip" role="tooltip" className="pointer-events-none absolute right-0 top-full z-20 mt-2 hidden whitespace-nowrap rounded-lg bg-slate-950 px-3 py-2 text-xs text-white shadow-lg group-hover:block group-focus-within:block">Requirements</span>
+                </span>
+                <Dialog.Portal>
+                  <Dialog.Backdrop className="fixed inset-0 z-40 bg-black/40" />
+                  <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 max-h-[90svh] w-[calc(100%_-_2rem)] max-w-3xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border bg-card p-5 shadow-xl sm:p-6">
+                    <div className="flex items-start justify-between gap-3">
+                      <Dialog.Title className="text-xl font-semibold">Activity instructions</Dialog.Title>
+                      <Dialog.Close render={<Button type="button" variant="ghost" size="icon" />} aria-label="Close activity instructions"><X className="size-4" aria-hidden="true" /></Dialog.Close>
+                    </div>
+                    <Dialog.Description className="mt-2 text-sm text-muted-foreground">Review your activity and the requirements defined by your teacher.</Dialog.Description>
+                    <h3 className="mt-5 font-semibold">{session.conversationTheme || topicLabels[session.topic] || session.topic}</h3>
+                    {session.parameters?.length ? <ul className="mt-3 list-disc space-y-3 pl-5 text-sm leading-6 [overflow-wrap:anywhere]">{session.parameters.map(p => <li key={p.id}>{p.requirement}</li>)}</ul>
+                      : <p className="mt-3 text-sm text-muted-foreground">No teacher-defined requirements were provided for this activity.</p>}
+                    {singleResponse && <p className="mt-5 rounded-lg bg-muted p-3 text-sm leading-6">Single independent response: record your answer and stop manually to submit it. You will then go directly to your report, without a coach reply. Pauses do not submit your answer.</p>}
+                  </Dialog.Popup>
+                </Dialog.Portal>
+              </Dialog.Root>
             </div>
           </div>
           <ol ref={conversationHistoryRef} tabIndex={0} aria-label="Conversation history" className="grid min-h-0 flex-1 content-start gap-5 overflow-y-auto overscroll-contain pr-2">
@@ -351,7 +385,7 @@ export function LivePracticeView() {
             </ol>
         <section className="mt-4 grid min-w-0 shrink-0 justify-items-center gap-3 border-t pt-4 pb-1" aria-label="Voice turn controls">
           {!turnController.pending && !active && <p className="max-w-md text-center text-sm leading-6 text-muted-foreground">This session has expired. You can no longer record a new turn.</p>}
-          {!turnController.pending && <PracticeRecorder key={sessionId} disabled={!active} onRecorded={onRecorded} onBusyChange={onRecorderBusyChange} onRecordingChange={onRecordingChange} actions={sessionActions} />}
+          {!turnController.pending && <PracticeRecorder key={sessionId} disabled={!active || finishing} onRecorded={onRecorded} onBusyChange={onRecorderBusyChange} onRecordingChange={onRecordingChange} actions={sessionActions} />}
           {turnController.pending && <div className="flex w-full items-center justify-center gap-2"><Button type="button" variant="outline" disabled={submitting} onClick={() => void checkSameTurn(false)}>
             {submitting ? 'Checking…' : 'Check for response'}
           </Button>{sessionActions}</div>}

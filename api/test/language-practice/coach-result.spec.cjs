@@ -5,8 +5,8 @@ const { parseCoachResult, InvalidCoachResultError } = require('../../dist/langua
 const transcript = 'Ayer yo voy al parque.';
 function output(overrides = {}) {
   return JSON.stringify({
-    correctedPhrase: 'Ayer fui al parque.',
-    feedback: "El verbo 'voy' cambia a 'fui' para expresar el pasado.",
+    correctedPhrase: 'Yesterday I went to the park.',
+    feedback: "Use the past tense 'went' instead of 'go'.",
     assistantResponse: 'That sounds like a lovely afternoon. The park must have been peaceful. Did you see anything interesting there?',
     ...overrides,
   });
@@ -23,13 +23,13 @@ function rejectsWithCode(raw, code, source = transcript) {
 
 test('accepts a changed correction and returns only the trimmed three-field result', () => {
   const result = parseCoachResult(output({
-    correctedPhrase: '  Ayer fui al parque.  ',
-    feedback: "  El verbo 'voy' cambia a 'fui' para expresar el pasado.  ",
+    correctedPhrase: '  Yesterday I went to the park.  ',
+    feedback: "  Use the past tense 'went' instead of 'go'.  ",
     assistantResponse: '  That sounds like a lovely afternoon. The park must have been peaceful. Did you see anything interesting there?  ',
   }), transcript);
   assert.deepEqual(result, {
-    correctedPhrase: 'Ayer fui al parque.',
-    feedback: "El verbo 'voy' cambia a 'fui' para expresar el pasado.",
+    correctedPhrase: 'Yesterday I went to the park.',
+    feedback: "Use the past tense 'went' instead of 'go'.",
     assistantResponse: 'That sounds like a lovely afternoon. The park must have been peaceful. Did you see anything interesting there?',
   });
   assert.deepEqual(Object.keys(result), ['correctedPhrase', 'feedback', 'assistantResponse']);
@@ -56,7 +56,7 @@ test('natural short replies accept affirmative Spanish no-change feedback withou
 });
 
 test('rejects missing and extra keys', () => {
-  const base = { correctedPhrase: 'Ayer fui al parque.', feedback: "El verbo 'voy' cambia a 'fui' en pasado.", assistantResponse: 'That sounds nice. The park was peaceful. Did you enjoy it?' };
+  const base = { correctedPhrase: 'Yesterday I went to the park.', feedback: "El verbo 'voy' cambia a 'fui' en pasado.", assistantResponse: 'That sounds nice. The park was peaceful. Did you enjoy it?' };
   const missing = { ...base };
   delete missing.feedback;
   rejectsWithCode(JSON.stringify(missing), 'wrong_shape');
@@ -71,13 +71,13 @@ test('rejects oversized raw JSON and oversized content', () => {
 });
 
 test('rejects duplicate fields and response repeating the correction', () => {
-  rejectsWithCode(output({ feedback: 'Ayer fui al parque.' }), 'fields_not_distinct');
-  rejectsWithCode(output({ assistantResponse: 'Ayer fui al parque.' }), 'correction_not_distinct');
+  rejectsWithCode(output({ feedback: 'Yesterday I went to the park.' }), 'fields_not_distinct');
+  rejectsWithCode(output({ assistantResponse: 'Yesterday I went to the park.' }), 'correction_not_distinct');
 });
 
 test('rejects obvious language mismatches', () => {
   rejectsWithCode(output({ assistantResponse: 'El viaje fue muy bonito y perfecto para nosotros.' }), 'assistant_response_language');
-  rejectsWithCode(output({ correctedPhrase: 'Yesterday I went to the park.' }), 'spanish_evidence_language');
+  rejectsWithCode(output({ correctedPhrase: 'El viaje fue muy bonito para nosotros.' }), 'spanish_evidence_language');
 });
 
 test('rejects unsupported proficiency and pronunciation claims', () => {
@@ -91,18 +91,18 @@ test('rejects correction feedback that does not identify the transcript change',
 
 test('accepts concise one-sided word evidence and grammar-term evidence', () => {
   assert.doesNotThrow(() => parseCoachResult(output({
-    feedback: "La palabra 'voy' desaparece.",
+    feedback: "Replace 'voy' with 'went'.",
   }), transcript));
   assert.doesNotThrow(() => parseCoachResult(output({
-    feedback: "La forma 'fui' es correcta.",
+    feedback: "The form 'went' is correct in the past tense.",
   }), transcript));
   assert.doesNotThrow(() => parseCoachResult(output({
-    feedback: 'El tiempo verbal necesita concordancia.',
+    feedback: 'Use the past tense for this verb.',
   }), transcript));
 });
 
 test('uses the transcript when matching changed-word evidence', () => {
-  const raw = output({ feedback: "La palabra 'voy' desaparece." });
+  const raw = output({ feedback: "Remove 'voy'." });
   assert.doesNotThrow(() => parseCoachResult(raw, transcript));
   assert.throws(() => parseCoachResult(raw, 'La semana pasada visité un museo.'), (error) =>
     error.violations.includes('correction_not_supported_by_transcript'));
@@ -125,5 +125,5 @@ test('handles malicious malformed JSON without echoing untrusted input', () => {
 
 test('rejects invalid transcript bounds with a typed bounded violation', () => {
   rejectsWithCode(output(), 'transcript_invalid', '');
-  rejectsWithCode(output(), 'transcript_invalid', 'x'.repeat(4001));
+  rejectsWithCode(output(), 'transcript_invalid', 'x'.repeat(30001));
 });

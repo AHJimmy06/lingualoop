@@ -47,7 +47,7 @@ test('OpenAI client and request are both deferred until an explicit coach respon
       this.responses = { create: async () => { requests += 1; return {}; } };
     }
   }
-  const keyFilePath = path.join(process.env.LOCALAPPDATA, 'LinguaLoop', 'secrets', 'coach.env');
+  const keyFilePath = path.join(process.env.LOCALAPPDATA || '/synthetic', 'LinguaLoop', 'secrets', 'coach.env');
   const providers = createLanguagePracticeTurnProviders({
     LINGUALOOP_OPENAI_COACH_ENABLED: 'true',
     LINGUALOOP_OPENAI_API_KEY_FILE: keyFilePath,

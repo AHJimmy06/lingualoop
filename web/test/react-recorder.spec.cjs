@@ -25,9 +25,9 @@ test('recording buffer accepts a valid payload exactly once and enforces duratio
   assert.equal(buffer.finish(250, 'audio/webm'), null);
 
   assert.equal(new RecordingBuffer().finish(249, 'audio/webm'), null);
-  assert.equal(new RecordingBuffer().finish(20_001, 'audio/webm'), null);
+  assert.equal(new RecordingBuffer().finish(600_001, 'audio/webm'), null);
   const oversized = new RecordingBuffer();
-  oversized.add(new Blob([new Uint8Array(2 * 1024 * 1024 + 1)]));
+  oversized.add(new Blob([new Uint8Array(32 * 1024 * 1024 + 1)]));
   assert.equal(oversized.finish(20_000, 'audio/webm'), null);
 });
 

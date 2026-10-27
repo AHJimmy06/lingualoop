@@ -123,3 +123,17 @@ test('migration encodes the original catalog and LinguaLoop owner foreign key', 
   assert.match(migration, /DEFAULT NOW\(\)/i);
   assert.match(migration, /expires_at TIMESTAMPTZ NOT NULL/i);
 });
+
+
+test('session image lookup uses persisted practice link and owner/session parameters', async () => {
+  const bytes = Buffer.from([255, 216, 255, 217]);
+  const fake = fakeExecutor({ rows: [{ bytes, mime: 'image/jpeg' }] });
+  assert.deepEqual(await fake.store.getSessionImage(OWNER_ID, SESSION_ID), { bytes, mime: 'image/jpeg' });
+  assert.deepEqual(fake.calls[0].parameters, [OWNER_ID, SESSION_ID]);
+  assert.match(fake.calls[0].sql, /i.practice_id = s.practice_id/);
+  assert.match(fake.calls[0].sql, /s.owner_id = \$1::uuid AND s.id = \$2::uuid/);
+  assert.equal(await fakeExecutor({ rows: [{ bytes: null, mime: null }] }).store.getSessionImage(OWNER_ID, SESSION_ID), null);
+  for (const rows of [[], [{ bytes: Buffer.alloc(0), mime: 'image/jpeg' }], [{ bytes, mime: 'text/html' }]]) {
+    await assert.rejects(fakeExecutor({ rows }).store.getSessionImage(OWNER_ID, SESSION_ID), LanguagePracticeSessionStoreError);
+  }
+});

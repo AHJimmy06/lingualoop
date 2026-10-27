@@ -16,6 +16,7 @@ const clientTurnId = '33333333-3333-4333-8333-333333333333';
 const turnId = '44444444-4444-4444-8444-444444444444';
 const leaseToken = '55555555-5555-4555-8555-555555555555';
 const env = {
+  LINGUALOOP_OPENAI_COACH_ENABLED: 'true',
   LINGUALOOP_OPENAI_API_KEY_FILE: '/unit-test/coach.env',
   LANGUAGE_PRACTICE_OPENAI_MODEL: 'gpt-5.6-luna',
 };
@@ -77,7 +78,7 @@ test('assembles a pure turn service and maps each explicit port exactly once', a
   ]);
 });
 
-test('Nest provider assembly eagerly constructs one safe adapter and delegates owner-scoped ports', async () => {
+test('Nest provider assembly lazily constructs the adapter and delegates owner-scoped ports', async () => {
   let constructions = 0;
   let requests = 0;
   const providers = createLanguagePracticeTurnProviders(env, {
@@ -86,7 +87,7 @@ test('Nest provider assembly eagerly constructs one safe adapter and delegates o
     OpenAIConstructor: class { constructor() { constructions += 1; this.responses = { create: async () => { requests += 1; throw new Error('not called'); } }; } },
   });
   const coachProvider = providers.find((provider) => provider.provide === LANGUAGE_PRACTICE_TURN_COACH);
-  assert.equal(constructions, 1);
+  assert.equal(constructions, 0);
   assert.equal(requests, 0);
   assert.equal(typeof coachProvider.useValue.respond, 'function');
   const serviceProvider = providers.find((provider) => provider.provide === LANGUAGE_PRACTICE_TURN_SERVICE);
@@ -163,7 +164,7 @@ test('invalid or incomplete provider configuration fails closed before inspectin
   }
 });
 
-test('invalid, unreadable, or malformed key files fail closed before returning Nest providers', () => {
+test('invalid, unreadable, or malformed key files fail closed on explicit first use', async () => {
   const invalidFileOptions = [
     { inspectFile: () => { throw new Error('unreadable path'); } },
     { inspectFile: () => ({ isFile: () => false, mode: 0o100600 }) },
@@ -178,11 +179,13 @@ test('invalid, unreadable, or malformed key files fail closed before returning N
     },
   ];
   for (const options of invalidFileOptions) {
-    assert.deepEqual(createLanguagePracticeTurnProviders(env, options), []);
+    const providers = createLanguagePracticeTurnProviders(env, options);
+    assert.equal(providers.length, 2);
+    await assert.rejects(providers.find(p => p.provide === LANGUAGE_PRACTICE_TURN_COACH).useValue.respond({}));
   }
 });
 
-test('valid explicit settings return exactly one provider set with an eager safe adapter', () => {
+test('valid explicit settings return exactly one provider set with an lazy safe adapter', () => {
   let constructions = 0;
   let requests = 0;
   const providers = createLanguagePracticeTurnProviders(env, {
@@ -207,6 +210,6 @@ test('valid explicit settings return exactly one provider set with an eager safe
   assert.equal(providers.filter((provider) => provider.provide === LANGUAGE_PRACTICE_TURN_COACH).length, 1);
   assert.equal(providers.filter((provider) => provider.provide === LANGUAGE_PRACTICE_TURN_SERVICE).length, 1);
   assert.equal(typeof providers.find((provider) => provider.provide === LANGUAGE_PRACTICE_TURN_COACH).useValue.respond, 'function');
-  assert.equal(constructions, 1);
+  assert.equal(constructions, 0);
   assert.equal(requests, 0);
 });

@@ -1,0 +1,21 @@
+openapi: 3.0.3
+info:
+  title: LinguaLoop local STT dependency
+  version: 1.0.0
+paths:
+  /ready:
+    get:
+      responses:
+        '200':
+          description: Ready
+          content:
+            application/json:
+              example: {ready: true, model: base.en}
+  /v1/audio/transcriptions:
+    post:
+      responses:
+        '200':
+          description: Recognized English text
+          content:
+            application/json:
+              example: {text: 'The friends enjoy walking in the park.'}

@@ -121,7 +121,7 @@ export function TeacherPracticesDialog({ catalogueVersion = 0 }: { catalogueVers
             : error ? <div role="alert"><p>{error}</p><Button className="mt-3" variant="outline" onClick={() => { setLoading(true); setError(''); setAttempt(value => value + 1); }}>Try again</Button></div>
             : selection.page === 'list' ? ownedPractices.length === 0 ? <p>No practices created yet.</p>
               : <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] items-start gap-4">{ownedPractices.map(practice => <div key={practice.id} className="grid min-w-0 grid-cols-1 gap-2">
-                <PracticeDetails practice={practice} />
+                <PracticeDetails practice={practice} showTeacherContext />
                 <Button className="w-fit" variant="outline" onClick={() => navigate({ page: 'submissions', practice })}>View submissions<span className="sr-only"> for {practice.title}</span></Button>
               </div>)}</div>
             : selection.page === 'submissions' ? <SubmissionsTable submissions={submissions} practiceId={selection.practice.id} onViewReport={student => navigate({ page: 'report', practice: selection.practice, sessionId: student.sessionId, student })} />

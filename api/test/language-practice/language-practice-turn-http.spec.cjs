@@ -144,7 +144,7 @@ test('multipart caps reject oversized audio and extra fields/files', async (t) =
   const { base, calls } = await createServer(t);
   const oversized = await fetch(`${base}/language-practice/sessions/${sessionId}/turns`, {
     method: 'POST', headers: authHeaders,
-    body: multipart(new Blob([Buffer.alloc(2 * 1024 * 1024 + 1)], { type: 'audio/webm' })),
+    body: multipart(new Blob([Buffer.alloc(32 * 1024 * 1024 + 1)], { type: 'audio/webm' })),
   });
   assert.equal(oversized.status, 413);
 

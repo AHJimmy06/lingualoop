@@ -1,0 +1,39 @@
+openapi: 3.0.3
+info:
+  title: Local practice session finish
+  version: 1.1.0
+paths:
+  /api/language-practice/sessions/{sessionId}/finish:
+    post:
+      summary: Finish a practice or discard an empty session
+      description: >-
+        Authenticated student ownership is required. Under a session row lock,
+        sessions with no completed turns and no active turn lease are deleted
+        (failed attempts cascade). DISCARDED is a response outcome, not a stored
+        status. The client returns to the catalogue without requesting a report.
+        Sessions with completed turns retain the existing completion/report flow.
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Finished or discarded
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [id, status]
+                properties:
+                  id: {type: string, format: uuid}
+                  status: {type: string, enum: [COMPLETED, EXPIRED, DISCARDED]}
+        '404': {description: Missing session or different owner}
+        '409': {description: A turn is in progress; nothing is discarded}
+        '503': {description: Operation unavailable; client must not navigate away}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer}

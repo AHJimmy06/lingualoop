@@ -14,10 +14,10 @@ import {
 
 export { FASTCONFORMER_MODEL_ID } from './fastconformer-protocol'
 const MAX_STARTUP_MS = 60_000
-const MAX_STDOUT_BYTES = 8_192
+const MAX_STDOUT_BYTES = 131_072
 const MAX_STDERR_BYTES = 4_000
-const MAX_REQUEST_MS = 90_000
-const DEFAULT_REQUEST_MS = 90_000
+const MAX_REQUEST_MS = 900_000
+const DEFAULT_REQUEST_MS = 900_000
 const TERM_GRACE_MS = 1_500
 const KILL_GRACE_MS = 250
 

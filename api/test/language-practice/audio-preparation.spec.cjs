@@ -12,10 +12,10 @@ function chunk(id, bytes) {
   const header = Buffer.alloc(8); header.write(id); header.writeUInt32LE(bytes.length, 4);
   return Buffer.concat([header, bytes, bytes.length % 2 ? Buffer.alloc(1) : Buffer.alloc(0)]);
 }
-function validWav({ list = false, channels = 1, format = 1, malformedChunk = false } = {}) {
+function validWav({ list = false, channels = 1, dataBytes = 2, format = 1, malformedChunk = false } = {}) {
   const fmt = Buffer.alloc(16); fmt.writeUInt16LE(format); fmt.writeUInt16LE(channels, 2);
   fmt.writeUInt32LE(16000, 4); fmt.writeUInt32LE(32000, 8); fmt.writeUInt16LE(2, 12); fmt.writeUInt16LE(16, 14);
-  const body = Buffer.concat([chunk('fmt ', fmt), ...(list ? [chunk('LIST', Buffer.from('INFO'))] : []), chunk('data', Buffer.from([0, 0]))]);
+  const body = Buffer.concat([chunk('fmt ', fmt), ...(list ? [chunk('LIST', Buffer.from('INFO'))] : []), chunk('data', Buffer.alloc(dataBytes))]);
   if (malformedChunk) body.writeUInt32LE(100, body.length - 6);
   const header = Buffer.alloc(12); header.write('RIFF'); header.writeUInt32LE(body.length + 4, 4); header.write('WAVE', 8);
   return Buffer.concat([header, body]);
@@ -32,7 +32,9 @@ async function fixture({ autoClose = true, output = 'valid' } = {}) {
     child.kill = (signal) => { child.signals.push(signal); return true; };
     child.signals = [];
     const outputPath = args[1].at(-1);
-    if (output === 'valid') writeFileSync(outputPath, validWav());
+    if (output === 'long') writeFileSync(outputPath, validWav({ dataBytes: 60 * 32000 }));
+    else if (output === 'too-long') writeFileSync(outputPath, validWav({ dataBytes: 601 * 32000 }));
+    else if (output === 'valid') writeFileSync(outputPath, validWav());
     else if (output === 'list') writeFileSync(outputPath, validWav({ list: true }));
     else if (output === 'bad-chunk') writeFileSync(outputPath, validWav({ malformedChunk: true }));
     else if (output === 'wrong-channels') writeFileSync(outputPath, validWav({ channels: 2 }));
@@ -43,7 +45,7 @@ async function fixture({ autoClose = true, output = 'valid' } = {}) {
       writeFileSync(target, validWav()); symlinkSync(target, outputPath);
     } else if (output === 'oversized') {
       writeFileSync(outputPath, validWav());
-      truncateSync(outputPath, 1024 * 1024 + 1);
+      truncateSync(outputPath, 19_200_000 + 1024 * 1024 + 1);
     }
     if (autoClose) queueMicrotask(() => child.emit('close', 0));
     return child;
@@ -67,7 +69,7 @@ test('validates exact MIME and size before creating a temp directory or spawning
   const f = await fixture();
   try {
     for (const [input, mime] of [[Buffer.alloc(0), 'audio/wav'], [Buffer.alloc(1), 'Audio/wav'],
-      [Buffer.alloc(1), 'audio/webm; codecs=opus'], [Buffer.alloc(2 * 1024 * 1024 + 1), 'audio/wav']]) {
+      [Buffer.alloc(1), 'audio/webm; codecs=opus'], [Buffer.alloc(32 * 1024 * 1024 + 1), 'audio/wav']]) {
       await safeFailure(withPreparedAudio(input, mime, () => 'no', opts(f)), 'preparation_input');
     }
     assert.deepEqual(await readdir(f.root), []);
@@ -82,8 +84,8 @@ test('uses fixed paths, safe permissions and FFmpeg args, then cleans after call
     const result = await withPreparedAudio(input, 'audio/mp4', async (wavPath) => {
       assert.equal(wavPath, require('node:path').resolve(wavPath));
       const directory = require('node:path').dirname(wavPath);
-      assert.equal((await stat(directory)).mode & 0o777, 0o700);
-      assert.equal((await stat(join(directory, 'input.m4a'))).mode & 0o777, 0o600);
+      if (process.platform !== 'win32') assert.equal((await stat(directory)).mode & 0o777, 0o700);
+      if (process.platform !== 'win32') assert.equal((await stat(join(directory, 'input.m4a'))).mode & 0o777, 0o600);
       assert.equal(await readFile(join(directory, 'input.m4a'), 'utf8'), 'input');
       return 'callback result';
     }, opts(f));
@@ -92,10 +94,10 @@ test('uses fixed paths, safe permissions and FFmpeg args, then cleans after call
     const [command, args, spawnOptions] = f.calls[0];
     assert.equal(command, '/tools/ffmpeg');
     assert.equal(spawnOptions.shell, false);
-    assert.deepEqual(args.slice(0, 6), ['-nostdin', '-y', '-i', args[3], '-t', '20']);
-    assert.match(args[3], /\/input\.m4a$/);
+    assert.deepEqual(args.slice(0, 6), ['-nostdin', '-y', '-i', args[3], '-t', '601']);
+    assert.match(args[3], /[\\/]input\.m4a$/);
     assert.deepEqual(args.slice(6, 14), ['-c:a', 'pcm_s16le', '-ac', '1', '-ar', '16000', '-f', 'wav']);
-    assert.match(args[14], /\/prepared\.wav$/);
+    assert.match(args[14], /[\\/]prepared\.wav$/);
     assert.deepEqual(await readdir(f.root), []);
     assert.equal(input.toString(), 'input');
   } finally { await f.cleanup(); }
@@ -108,12 +110,12 @@ test('keeps the unique temporary directory until callback settles and cleans aft
     const callbackPromise = new Promise((resolve) => { release = resolve; });
     const operation = withPreparedAudio(Buffer.from('x'), 'audio/ogg;codecs=opus', async (wavPath) => {
       const directory = require('node:path').dirname(wavPath);
-      assert.match(wavPath, /\/prepared\.wav$/);
+      assert.match(wavPath, /[\\/]prepared\.wav$/);
       assert.deepEqual(await readdir(f.root), [require('node:path').basename(directory)]);
       await callbackPromise;
       throw new Error('/private callback details');
     }, opts(f));
-    await new Promise((resolve) => setImmediate(resolve));
+    await waitForChild(f);
     assert.equal((await readdir(f.root)).length, 1);
     release();
     await safeFailure(operation);
@@ -150,7 +152,7 @@ test('accepts LIST metadata before the data chunk', async () => {
 
 test('rejects missing, malformed, symlinked and oversized WAV output without calling callback', async (t) => {
   for (const output of ['missing', 'malformed', 'bad-chunk', 'wrong-channels', 'wrong-format', 'symlink', 'oversized']) {
-    await t.test(output, async () => {
+    await t.test(output, { skip: output === 'symlink' && process.platform === 'win32' ? 'Windows symlink privilege is not assumed' : false }, async () => {
       const f = await fixture({ output });
       try {
         await safeFailure(withPreparedAudio(Buffer.from('x'), 'audio/wav', () => assert.fail('invalid WAV reached callback'), opts(f)), 'preparation_wav');
@@ -207,4 +209,12 @@ test('timeout escalates TERM to KILL and waits for delayed close before cleanup'
     await safeFailure(promise, 'preparation_timeout');
     assert.deepEqual(await readdir(f.root), []);
   } finally { await f.cleanup(); }
+});
+
+
+test('audio preparation retains a 60-second decoded response and rejects rather than truncates over 10 minutes',async()=>{
+ for(const output of ['long','too-long']){const f=await fixture({output});try{
+  if(output==='long') assert.equal(await withPreparedAudio(Buffer.from('audio'),'audio/webm',async file=>(await readFile(file)).length,opts(f)),60*32000+44);
+  else await safeFailure(withPreparedAudio(Buffer.from('audio'),'audio/webm',()=>assert.fail('overlong audio must not be evaluated'),opts(f)),'preparation_wav');
+ }finally{await f.cleanup();}}
 });

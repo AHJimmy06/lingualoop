@@ -31,13 +31,13 @@ const ACCEPTED_MIME_TYPES = [
   'audio/webm', 'audio/webm;codecs=opus', 'audio/ogg', 'audio/ogg;codecs=opus',
   'audio/wav', 'audio/x-wav', 'audio/mp4',
 ];
-const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024;
-const MAX_DURATION_MS = 20_000;
+const MAX_FILE_SIZE_BYTES = 32 * 1024 * 1024;
+const MAX_DURATION_MS = 600_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type VerifiedRequest = { verifiedIdentity?: { ownerId: string } };
 
-type SessionStore = Pick<LanguagePracticeSessionStore, 'createSession' | 'createCustomSession' | 'getSession' | 'finishSession' | 'listHistory'>;
+type SessionStore = Pick<LanguagePracticeSessionStore, 'createSession' | 'createCustomSession' | 'getSession' | 'finishSession' | 'listHistory' | 'getSessionImage'>;
 type TurnStore = Pick<LanguagePracticeTurnStore, 'listCompletedTurns'>;
 type ReportService = Pick<LanguagePracticeReportService, 'getOrCreate'>;
 
@@ -220,6 +220,27 @@ export class LanguagePracticeSessionController {
       throw new HttpException('Language practice session is unavailable.', 503);
     }
     return { ...session, turns };
+  }
+
+  @Get('sessions/:sessionId/image')
+  async getSessionImage(@Param('sessionId') sessionId: string, @Req() request: VerifiedRequest,
+    @Res() response: { setHeader(name: string, value: string): void; status(code: number): unknown; end(bytes?: Buffer): void }) {
+    if (!UUID_PATTERN.test(sessionId)) throw new HttpException('Invalid session identifier.', 400);
+    const ownerId = request.verifiedIdentity?.ownerId;
+    if (!ownerId) throw new HttpException('Authentication service unavailable.', 503);
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    try {
+      if (!(await this.sessions.getSession(ownerId, sessionId))) throw new HttpException('Not found.', 404);
+      const image = await this.sessions.getSessionImage(ownerId, sessionId);
+      if (!image) { response.status(204); response.end(); return; }
+      response.setHeader('Content-Type', image.mime);
+      response.setHeader('Content-Length', String(image.bytes.length));
+      response.end(image.bytes);
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      throw new HttpException('Session image is unavailable.', 503);
+    }
   }
 
   @Get('sessions/:sessionId/turns')

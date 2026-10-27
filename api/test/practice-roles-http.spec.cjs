@@ -37,7 +37,7 @@ test('HTTP role matrix, global student catalogue, teacher isolation and exact cu
   const catalogue = new PracticeCatalogueStore({ async query(sql, values) {
     if (dependencyFailure) throw Error('PRIVATE DB');
     if (sql.includes('INSERT')) {
-      const row = { id: rows.length ? Q : P, teacher_id: values[0], teacher_name: values[0] === A ? 'Teacher A' : 'Teacher B', title: values[1], topic: values[2], level: values[3], duration_minutes: values[4], parameters: JSON.parse(values[5]), created_at: new Date('2026-01-01') };
+      const row = { id: rows.length ? Q : P, teacher_id: values[0], teacher_name: values[0] === A ? 'Teacher A' : 'Teacher B', title: values[1], topic: values[2], level: values[3], duration_minutes: values[4], parameters: JSON.parse(values[5]), difficulty: values[7], activity: JSON.parse(values[8]), created_at: new Date('2026-01-01') };
       rows.push(row); return { rows: [row] };
     }
     assert.ok(sql.includes('ORDER BY p.created_at ASC, p.id ASC') || sql.includes('WHERE p.id = $1::uuid'));
@@ -95,9 +95,9 @@ test('HTTP role matrix, global student catalogue, teacher isolation and exact cu
   for (const invalid of [null, [], {}, { ...input, teacherId: B }, { ...input, title: '' }, { ...input, title: 'x'.repeat(121) }, { ...input, parameters: [] }, { ...input, parameters: Array(21).fill({ requirement: 'x' }) }, { ...input, parameters: [{ requirement: 'x'.repeat(501) }] }, { ...input, setup }, { ...input, setup: { ...input.setup, x: 1 } }, { ...input, parameters: [{ id: P, requirement: 'x' }] }]) assert.equal((await request('/language-practice/practices', 'POST', invalid)).status, 400);
   const first = await request('/language-practice/practices', 'POST', input);
   assert.equal(first.status, 201);
-  assert.deepEqual(Object.keys(first.body).sort(), ['createdAt', 'hasImage', 'id', 'parameters', 'setup', 'teacherId', 'teacherName', 'title']);
+  assert.deepEqual(Object.keys(first.body).sort(), ['activity', 'createdAt', 'hasImage', 'id', 'parameters', 'setup', 'teacherId', 'teacherName', 'title']);
   assert.equal(first.body.hasImage, false);
-  assert.deepEqual(first.body.setup, { ...input.setup, topic: 'everyday-conversation' });
+  assert.deepEqual(first.body.setup, { ...input.setup, topic: 'everyday-conversation', difficulty: 'medium' });
   assert.equal(first.body.teacherId, A);
   assert.match(first.body.parameters[0].id, /^[0-9a-f-]{36}$/);
   ownerId = B;

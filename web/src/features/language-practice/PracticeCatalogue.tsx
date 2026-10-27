@@ -8,9 +8,9 @@ import { PracticeImage } from './PracticeImage';
 import { difficultyLabel } from './practice-preferences';
 import { LanguagePracticeClient, LanguagePracticeClientError, type TeacherPractice } from './language-practice-client';
 
-export function PracticeDetails({ practice }: { practice: TeacherPractice }) {
+export function PracticeDetails({ practice, showTeacherContext = false }: { practice: TeacherPractice; showTeacherContext?: boolean }) {
   return <article className="min-w-0 rounded-xl border bg-card p-5 [overflow-wrap:anywhere]">
-    <PracticeImage practice={practice} className="mb-4 h-40 w-full rounded-lg object-cover" />
+    <PracticeImage practice={practice} className="mb-4 h-52 w-full rounded-lg object-contain sm:h-64" />
     <h2 className="text-lg font-semibold">{practice.title}</h2>
     <p className="mt-1 text-sm text-muted-foreground">By {practice.teacherName}</p>
     <dl className="mt-3 flex flex-wrap gap-4 text-sm text-muted-foreground">
@@ -18,6 +18,7 @@ export function PracticeDetails({ practice }: { practice: TeacherPractice }) {
       <div><dt>Task difficulty</dt><dd>{difficultyLabel(practice.setup.difficulty)}</dd></div>
       <div><dt>Duration</dt><dd>{practice.setup.durationMinutes} minutes</dd></div>
     </dl>
+    {practice.activity && <div className="mt-3 grid gap-2 text-sm"><p><strong>Mode:</strong> {practice.activity.mode === 'single-response' ? 'Single response assessment' : 'Conversation'}</p>{showTeacherContext && practice.activity.aiRole && <p><strong>AI role:</strong> {practice.activity.aiRole}</p>}{showTeacherContext && practice.activity.location && <p><strong>Setting:</strong> {practice.activity.location}</p>}</div>}
     <h3 className="mt-4 text-sm font-semibold">Conversational requirements</h3>
     <ol className="mt-2 list-decimal space-y-2 pl-5 text-sm">{practice.parameters.map(item => <li key={item.id}>{item.requirement}</li>)}</ol>
   </article>;
@@ -75,7 +76,7 @@ function ChallengeCard({ practice, disabled = false, claimStart }: {
         </span>
       </span>
     </Dialog.Trigger>
-    <Dialog.Portal><Dialog.Backdrop className="fixed inset-0 z-40 bg-black/40" /><Dialog.Popup className="fixed left-1/2 top-1/2 z-50 max-h-[90svh] w-[calc(100%_-_2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border bg-card p-5 shadow-xl sm:p-6">
+    <Dialog.Portal><Dialog.Backdrop className="fixed inset-0 z-40 bg-black/40" /><Dialog.Popup className="fixed left-1/2 top-1/2 z-50 max-h-[90svh] w-[calc(100%_-_2rem)] max-w-5xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border bg-card p-5 shadow-xl sm:p-6">
       <div className="flex items-start justify-between gap-3"><div><Dialog.Title className="text-xl font-semibold">Practice details</Dialog.Title><Dialog.Description className="mt-1 text-sm text-muted-foreground">Review the fixed settings and conversation requirements before starting.</Dialog.Description></div><Dialog.Close disabled={busy} render={<Button size="icon" variant="ghost" />} aria-label="Close practice details"><X className="size-4" aria-hidden="true" /></Dialog.Close></div>
       <PracticeDetails practice={practice} />
       {error && <p className="mt-3 text-sm text-destructive" role="alert">{error}</p>}

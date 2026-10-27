@@ -52,11 +52,11 @@ test('session creation binds an owner and stores requested duration in disposabl
       password: PASSWORD, connectionTimeoutMillis: 1_000,
     };
     client = await waitForPostgres(config);
-    assert.equal(await runLinguaLoopMigrations(client, MIGRATIONS_DIR), 8);
+    assert.equal(await runLinguaLoopMigrations(client, MIGRATIONS_DIR), 17);
     await client.end();
     client = new Client(config);
     await client.connect();
-    await client.query("INSERT INTO lingualoop_accounts (id, issuer, subject) VALUES ($1, 'google', 'session-create-owner')", [OWNER]);
+    await client.query("INSERT INTO lingualoop_accounts (id, issuer, subject, email, name, role) VALUES ($1::uuid, 'local', $1::uuid::text, $1::uuid::text || '@example.test', 'Test', 'student')", [OWNER]);
 
     pool = new Pool(config);
     executor = createLinguaLoopQueryExecutor({ host: '127.0.0.1', port, password: 'a'.repeat(64) }, pool);

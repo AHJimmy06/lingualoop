@@ -1,5 +1,5 @@
-export const MAX_RECORDING_MS = 20_000;
-export const MAX_AUDIO_BYTES = 2 * 1024 * 1024;
+export const MAX_RECORDING_MS = 600_000;
+export const MAX_AUDIO_BYTES = 32 * 1024 * 1024;
 
 const ALLOWED_AUDIO_MIME_TYPES = [
   'audio/webm;codecs=opus',
@@ -19,7 +19,7 @@ export function selectSupportedAudioMimeType(
 
 export function transcriptionErrorMessage(error: string): string {
   switch (error) {
-    case 'too-large': return 'This recording is too large. Keep it under 2 MiB and try again.';
+    case 'too-large': return 'This recording is too large. Keep it under 32 MiB and try again.';
     case 'unsupported': return 'The server cannot process this audio format.';
     case 'rate-limited': return 'Too many transcription requests. Please wait and try again.';
     case 'unavailable': return 'Transcription is temporarily unavailable or timed out. Please try again.';

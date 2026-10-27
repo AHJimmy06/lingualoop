@@ -38,7 +38,7 @@ test('serializes bounded requests as one JSON line and requires an absolute path
   assert.equal(serializeRequest('i'.repeat(256), `/${'a'.repeat(1000)}`).endsWith('\n'), true);
   for (const [id, audioPath] of [
     ['', '/a'], ['i'.repeat(257), '/a'], ['bad\nid', '/a'], ['bad\uD800', '/a'], ['id', 'relative.wav'],
-    ['id', '/bad\u0000path'], ['id', `/${'a'.repeat(8192)}`],
+    ['id', '/bad\u0000path'], ['id', `/${'a'.repeat(131072)}`],
   ]) protocolError(() => serializeRequest(id, audioPath), 'INVALID_REQUEST');
 });
 
@@ -76,13 +76,13 @@ test('parses exact transcript and legacy no-speech results', () => {
 });
 
 test('rejects malformed, mismatched, oversized, and malicious results safely', () => {
-  for (const line of ['', '{bad', '[]', 'x'.repeat(8193)]) {
-    protocolError(() => parseResult(line, 'id'), line.length > 8192 ? 'LINE_TOO_LARGE' : line === '[]' ? 'INVALID_LINE' : 'INVALID_LINE');
+  for (const line of ['', '{bad', '[]', 'x'.repeat(131073)]) {
+    protocolError(() => parseResult(line, 'id'), line.length > 131072 ? 'LINE_TOO_LARGE' : line === '[]' ? 'INVALID_LINE' : 'INVALID_LINE');
   }
   protocolError(() => parseResult(JSON.stringify({ type: 'result', id: 'other', transcript: 'hello' }), 'id'), 'UNEXPECTED_MESSAGE');
   protocolError(() => parseResult(JSON.stringify({ type: 'result', id: 'id', transcript: '' }), 'id'), 'INVALID_RESULT');
   protocolError(() => parseResult(JSON.stringify({ type: 'result', id: 'id', transcript: '   ' }), 'id'), 'INVALID_RESULT');
-  protocolError(() => parseResult(JSON.stringify({ type: 'result', id: 'id', transcript: 't'.repeat(4001) }), 'id'), 'INVALID_RESULT');
+  protocolError(() => parseResult(JSON.stringify({ type: 'result', id: 'id', transcript: 't'.repeat(30001) }), 'id'), 'INVALID_RESULT');
   protocolError(() => parseResult(JSON.stringify({ type: 'result', id: 'id', transcript: 'hello', audioPath: '/private/audio' }), 'id'), 'INVALID_RESULT');
   protocolError(() => parseResult(JSON.stringify({ type: 'result', id: 'id', code: 'OTHER_SECRET', error: '/private/model failure' }), 'id'), 'INVALID_RESULT');
   protocolError(() => parseResult(JSON.stringify({ type: 'result', id: 'id', code: FASTCONFORMER_NO_SPEECH_CODE, error: 'failure', transcript: 'leak' }), 'id'), 'INVALID_RESULT');

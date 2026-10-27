@@ -126,8 +126,8 @@ test('custom session is one authoritative INSERT SELECT copying even NULL diffic
       calls++;
       assert.deepEqual(values, [owner, id]);
       assert.match(sql, /INSERT INTO lingualoop_language_practice_sessions/);
-      assert.match(sql, /conversation_theme_snapshot, difficulty\)/);
-      assert.match(sql, /id, parameters, conversation_theme, difficulty\s+FROM lingualoop_practices WHERE id = \$2::uuid/);
+      assert.match(sql, /conversation_theme_snapshot, difficulty, activity_snapshot\)/);
+      assert.match(sql, /id, parameters, conversation_theme, difficulty, activity\s+FROM lingualoop_practices WHERE id = \$2::uuid/);
       assert.doesNotMatch(sql, /COALESCE|UPDATE/);
       return { rows: [{ ...row, difficulty }] };
     } });

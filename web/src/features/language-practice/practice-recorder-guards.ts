@@ -1,5 +1,5 @@
-export const MAX_RECORDING_MS = 20_000;
-export const MAX_AUDIO_BYTES = 2 * 1024 * 1024;
+export const MAX_RECORDING_MS = 600_000;
+export const MAX_AUDIO_BYTES = 32 * 1024 * 1024;
 export const MIN_RECORDING_MS = 250;
 
 export function isValidRecording(durationMs: number, size: number): boolean {
@@ -31,5 +31,5 @@ export function isRecorderShortcut(event: KeyboardEvent, disabled: boolean): boo
 
 export function formatRecordingTime(milliseconds: number): string {
   const seconds = Math.max(0, Math.ceil(milliseconds / 1000));
-  return `0:${String(seconds).padStart(2, '0')}`;
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }

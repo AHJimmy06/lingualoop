@@ -205,7 +205,7 @@ export class AuthSession {
       return null;
     }
     const controller = new AbortController();
-    const timeoutMs = formData && this.isLanguagePracticeTurnUrl(url) ? 240_000 : 90_000;
+    const timeoutMs = formData && this.isLanguagePracticeTurnUrl(url) ? 1_200_000 : 90_000;
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await this.request(url, {

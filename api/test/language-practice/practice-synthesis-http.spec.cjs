@@ -58,9 +58,9 @@ async function createServer(t, { hold = false } = {}) {
       { provide: PIPER_RUNTIME, useValue: { getHost(voice) { calls.push(`voice:${voice}`); return host; } } },
       { provide: LinguaLoopTokenService, useValue: { async verifyBearerToken(value) {
         if (value !== token) throw new InvalidBearerTokenError();
-        return { issuer: 'google', subject: 'verified-subject', sessionId };
+        return { issuer: 'local', subject: ownerId, sessionId };
       } } },
-      { provide: LINGUALOOP_IDENTITY_STORE, useValue: { async findOwnerByIdentity() { return ownerId; }, async findApprovalByOwner() { return { email: 'student@example.test', role: 'student' }; } } },
+      { provide: LINGUALOOP_IDENTITY_STORE, useValue: { async findOwnerByIdentity() { return ownerId; }, async findAccountByOwner() { return { name: 'Student', email: 'student@example.test', role: 'student' }; } } },
       { provide: LINGUALOOP_SESSION_STORE, useValue: { async isSessionActive(owner, session) { return owner === ownerId && session === sessionId; } } },
       ConfiguredVerifiedRequestGuard,
       require('../../dist/auth/role.guard.js').RoleGuard,

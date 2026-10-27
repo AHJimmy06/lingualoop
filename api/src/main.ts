@@ -14,7 +14,8 @@ async function bootstrap(): Promise<void> {
     await app.get<PiperRuntimeHost>(PIPER_RUNTIME).start();
   }
   const port = Number(process.env.PORT) || 3400;
-  await app.listen(port);
+  // Explicit loopback binding for local validation; preserve the container default.
+  await app.listen(port, process.env.LINGUALOOP_BIND_HOST ?? '0.0.0.0');
 }
 
 void bootstrap().catch(() => {

@@ -90,7 +90,7 @@ test('mismatched, malformed, oversized, and unsolicited results fail closed', as
       await new Promise((resolve) => setImmediate(resolve));
       if (scenario === 'mismatch') child.stdout.write(result('not-the-request-id'));
       if (scenario === 'malformed') child.stdout.write('not json\n');
-      if (scenario === 'oversized') child.stdout.write('x'.repeat(8193));
+      if (scenario === 'oversized') child.stdout.write('x'.repeat(131073));
       if (scenario === 'unsolicited') {
         const id = JSON.parse(child.stdin.read().toString()).id;
         child.stdout.write(result(id) + result(id));
@@ -174,7 +174,7 @@ test('timeout, child close, and shutdown reject pending requests and clear their
 });
 
 test('rejects invalid request timeout configuration', () => {
-  for (const requestTimeoutMs of [0, -1, 90001, 1.5]) {
+  for (const requestTimeoutMs of [0, -1, 900001, 1.5]) {
     assert.throws(() => new FastConformerHost(config({ requestTimeoutMs })), /Invalid FastConformer host configuration/);
   }
 });

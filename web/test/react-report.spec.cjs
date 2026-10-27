@@ -38,8 +38,8 @@ test('renders evidence-backed report sections and bounded-list empty states', ()
   assert.match(routeView, /<PracticeReportContent report=\{report\} session=\{session\} learningSupport=\{learningSupport\}/);
   assert.doesNotMatch(content, /authSession|getOrCreateReport|fetch\(/);
   assert.match(content, /<ReportSpeechButton text=\{support\.suggestedEnglish\} language="en"/);
-  assert.match(content, /Saved wording · Español/);
-  assert.match(content, /<ReportSpanishExplanation/);
+  assert.doesNotMatch(content, /Saved wording · Español/);
+  assert.doesNotMatch(content, /<ReportSpanishExplanation/);
   assert.doesNotMatch(view, /localStorage|sessionStorage|speechSynthesis|synthesize|transcribe/i);
 });
 

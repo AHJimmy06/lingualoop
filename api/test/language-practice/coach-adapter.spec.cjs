@@ -11,12 +11,12 @@ const input = {
     source: 'practice-catalog',
   },
   level: 'A2',
-  transcript: 'Ayer yo voy al parque.',
+  transcript: 'Yesterday I go to the park.',
   history: [{ role: 'assistant', content: 'What did you do yesterday?' }],
 };
 const goodOutput = JSON.stringify({
-  correctedPhrase: 'Ayer fui al parque.',
-  feedback: "El verbo 'voy' cambia a 'fui' para expresar el pasado.",
+  correctedPhrase: 'Yesterday I went to the park.',
+  feedback: "Change 'go' to 'went' to use the past tense.",
   assistantResponse: 'That sounds like a lovely afternoon. The park must have been peaceful. Did you see anything interesting there?',
 });
 

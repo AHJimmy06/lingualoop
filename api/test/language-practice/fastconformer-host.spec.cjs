@@ -116,7 +116,7 @@ test('caps unterminated startup output and validates bounded config', async () =
   const { host, child } = harness();
   const starting = host.start();
   const rejected = assert.rejects(starting, /output limit/);
-  child.stdout.write('x'.repeat(8193));
+  child.stdout.write('x'.repeat(131073));
   await rejected;
   await host.shutdown();
   assert.doesNotThrow(() => new FastConformerHost(config({ startupTimeoutMs: 60000 })));
@@ -277,7 +277,7 @@ test('transcribe preserves finite startup diagnostics instead of cancellation', 
   const cases = [
     ['startup_malformed', (child) => child.stdout.write('SECRET not json\n')],
     ['startup_identity', (child) => child.stdout.write(ready({ modelId: 'SECRET' }))],
-    ['startup_output_limit', (child) => child.stdout.write('x'.repeat(8193))],
+    ['startup_output_limit', (child) => child.stdout.write('x'.repeat(131073))],
     ['startup_unsolicited', (child) => child.stdout.write(ready() + 'SECRET\n')],
     ['startup_process_error', (child) => child.emit('error', new Error('SECRET /private'))],
     ['startup_stream_error', (child) => child.stderr.emit('error', new Error('SECRET'))],
@@ -436,7 +436,7 @@ test('request deadline still includes startup and never replays a timed-out requ
   child.stdout.write(ready());
   await flush();
   assert.equal(JSON.parse(child.stdin.read().toString()).audioPath, '/audio/deadline.wav');
-  t.mock.timers.tick(30000);
+  t.mock.timers.tick(840000);
   await flush();
   assert.equal(host.pendingRequest !== undefined, true);
   t.mock.timers.tick(1);

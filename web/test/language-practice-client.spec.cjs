@@ -286,11 +286,11 @@ test('rejects malformed DTOs, mismatched turn ids, and response audio above 8 Mi
   await assert.rejects(client.submitTurn(sessionId, audio, clientTurnId), { kind: 'invalid-response' });
 });
 
-test('uses a bounded 240-second timeout only for multipart turns and honors response-specific text bounds', async () => {
+test('uses a bounded 1200-second timeout only for multipart turns and honors response-specific text bounds', async () => {
   const originalSetTimeout = global.setTimeout;
   const originalClearTimeout = global.clearTimeout;
   const timeouts = [];
-  let turnResponse = { ...turnBody, transcript: 't'.repeat(4000) };
+  let turnResponse = { ...turnBody, transcript: 't'.repeat(30000) };
   let sessionDetail = sessionBody;
   const { auth } = authenticatedFetch((url) => {
     if (url === '/api/language-practice/sessions') return json(sessionBody);
@@ -310,18 +310,18 @@ test('uses a bounded 240-second timeout only for multipart turns and honors resp
     await client.createSession({ level: 'B1', topic: 'travel', durationMinutes: 5 });
     await client.getOrCreateReport(sessionId);
     const audio = new Blob(['x'], { type: 'audio/wav' });
-    assert.equal((await client.submitTurn(sessionId, audio, clientTurnId)).transcript.length, 4000);
-    assert.deepEqual(timeouts, [90_000, 90_000, 240_000]);
+    assert.equal((await client.submitTurn(sessionId, audio, clientTurnId)).transcript.length, 30000);
+    assert.deepEqual(timeouts, [90_000, 90_000, 1_200_000]);
 
-    turnResponse = { ...turnBody, transcript: 't'.repeat(4001) };
+    turnResponse = { ...turnBody, transcript: 't'.repeat(30001) };
     await assert.rejects(client.submitTurn(sessionId, audio, clientTurnId), { kind: 'invalid-response' });
 
     const boundedHistory = {
       ...sessionBody,
-      turns: [{ sequence: 1, transcript: 't'.repeat(2000), assistantResponse: 'a'.repeat(2000), completedAt: '2026-01-01T00:01:00.000Z' }],
+      turns: [{ sequence: 1, transcript: 't'.repeat(30000), assistantResponse: 'a'.repeat(30000), completedAt: '2026-01-01T00:01:00.000Z' }],
     };
     sessionDetail = boundedHistory;
-    assert.equal((await client.getSession(sessionId)).turns[0].transcript.length, 2000);
+    assert.equal((await client.getSession(sessionId)).turns[0].transcript.length, 30000);
     boundedHistory.turns[0].transcript += 't';
     sessionDetail = boundedHistory;
     await assert.rejects(client.getSession(sessionId), { kind: 'invalid-response' });
@@ -467,4 +467,26 @@ test('complete report for an empty session needs no optional AI enrichment', asy
   const complete = await new LanguagePracticeClient(auth).getCompleteReport(sessionId);
   assert.deepEqual(complete.learningSupport, { corrections: [], strengths: [], recommendations: [] });
   assert.equal(calls.some(c => c.url.includes('learning-support')), false);
+});
+
+
+test('session images use authenticated session URL and bounded JPEG contract', async () => {
+  const id = '123e4567-e89b-42d3-a456-426614174000';
+  let response; const urls = [];
+  const client = new LanguagePracticeClient({ authenticated: true, async getWithRefresh(url) { urls.push(url); return response; } });
+  response = new Response(null, { status: 204 });
+  assert.equal(await client.getSessionImage(id), null);
+  response = new Response(new Uint8Array([255,216,255,217]), { headers: { 'content-type': 'image/jpeg' } });
+  assert.equal((await client.getSessionImage(id)).size, 4);
+  assert.equal(urls[0], `/api/language-practice/sessions/${id}/image`);
+  for (const value of [new Response('html', { headers: { 'content-type': 'text/html' } }), new Response(null, { status: 404 }), new Response(new Uint8Array(2097153), { headers: { 'content-type': 'image/jpeg' } })]) {
+    response = value; await assert.rejects(client.getSessionImage(id), LanguagePracticeClientError);
+  }
+});
+
+
+test('finish accepts an explicit discarded outcome without creating a report', async () => {
+  const {auth, calls} = authenticatedFetch(() => json({id: sessionId, status: 'DISCARDED'}));
+  assert.deepEqual(await new LanguagePracticeClient(auth).finishSession(sessionId), {id: sessionId, status: 'DISCARDED'});
+  assert.equal(calls.filter(call => call.url.includes('/report')).length, 0);
 });

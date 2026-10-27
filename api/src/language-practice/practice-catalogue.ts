@@ -1,3 +1,4 @@
+import { parseActivityConfiguration, type ActivityConfiguration } from './activity-configuration';
 import { randomUUID } from 'node:crypto';
 import { isNormalizedPracticeImage, MAX_PRACTICE_IMAGE_BYTES, type NormalizedPracticeImage } from './practice-image';
 import { validateAccountName } from '../auth/account-store';
@@ -15,6 +16,7 @@ export interface PracticeDto {
   parameters: PracticeParameter[];
   createdAt: string;
   hasImage: boolean;
+  activity?: ActivityConfiguration;
 }
 export const PRACTICE_CATALOGUE_STORE = Symbol('PRACTICE_CATALOGUE_STORE');
 export const PRACTICE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -31,8 +33,9 @@ export function validatePracticeText(value: unknown, max: number): asserts value
   if (typeof value !== 'string' || !value.trim() || value.length > max ||
       /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(value)) throw new TypeError('Invalid practice text.');
 }
-export function validatePracticeInput(value: unknown): { title: string; setup: Omit<LanguagePracticeSetup, 'topic' | 'difficulty'> & { difficulty: PracticeDifficulty }; parameters: { requirement: string }[] } {
-  const body = exactObject(value, ['title', 'setup', 'parameters']);
+export function validatePracticeInput(value: unknown): { title: string; setup: Omit<LanguagePracticeSetup, 'topic' | 'difficulty'> & { difficulty: PracticeDifficulty }; parameters: { requirement: string }[]; activity?: ActivityConfiguration } {
+  const body = exactObject(value, value && typeof value === 'object' && Object.hasOwn(value, 'activity') ? ['title', 'setup', 'parameters', 'activity'] : ['title', 'setup', 'parameters']);
+  const activity = parseActivityConfiguration(body.activity);
   validatePracticeText(body.title, 120);
   const setup = exactObject(body.setup, body.setup && typeof body.setup === 'object' && Object.hasOwn(body.setup, 'difficulty')
     ? ['level', 'durationMinutes', 'difficulty'] : ['level', 'durationMinutes']);
@@ -45,7 +48,7 @@ export function validatePracticeInput(value: unknown): { title: string; setup: O
     validatePracticeText(parameter.requirement, 500);
     return { requirement: parameter.requirement };
   });
-  return { title: body.title, setup: { level: setup.level as LanguagePracticeSetup['level'], durationMinutes: setup.durationMinutes as LanguagePracticeSetup['durationMinutes'], difficulty }, parameters };
+  return { title: body.title, setup: { level: setup.level as LanguagePracticeSetup['level'], durationMinutes: setup.durationMinutes as LanguagePracticeSetup['durationMinutes'], difficulty }, parameters, ...(body.activity === undefined ? {} : { activity }) };
 }
 /** Durable ordered snapshots are validated independently of the mutable catalogue. */
 export function parsePracticeParameters(value: unknown): PracticeParameter[] {
@@ -76,7 +79,7 @@ function practice(value: unknown): PracticeDto {
   const date = row.created_at instanceof Date ? row.created_at : new Date(row.created_at as string);
   if (!Number.isFinite(date.valueOf())) throw new PracticeCatalogueError();
   validateAccountName(row.teacher_name);
-  return { id: row.id, teacherId: row.teacher_id, teacherName: row.teacher_name, title: row.title, setup, parameters, createdAt: date.toISOString(), hasImage: row.has_image === true };
+  return { id: row.id, teacherId: row.teacher_id, teacherName: row.teacher_name, title: row.title, setup, parameters, createdAt: date.toISOString(), hasImage: row.has_image === true, ...(row.activity === undefined ? {} : { activity: parseActivityConfiguration(row.activity) }) };
 }
 export interface PracticeSubmissionDto {
   sessionId: string;
@@ -108,20 +111,20 @@ function submission(value: unknown): PracticeSubmissionDto {
 }
 export class PracticeCatalogueStore {
   constructor(private readonly executor: QueryExecutor) {}
-  async create(teacherId: string, value: { title: string; setup: Omit<LanguagePracticeSetup, 'topic'>; parameters: { requirement: string }[] }, image?: NormalizedPracticeImage): Promise<PracticeDto> {
+  async create(teacherId: string, value: { title: string; setup: Omit<LanguagePracticeSetup, 'topic'>; parameters: { requirement: string }[]; activity?: ActivityConfiguration }, image?: NormalizedPracticeImage): Promise<PracticeDto> {
     try {
       if (!PRACTICE_UUID.test(teacherId)) throw new TypeError();
       const input = validatePracticeInput(value);
       if (image !== undefined && !isNormalizedPracticeImage(image)) throw new TypeError();
       const parameters = input.parameters.map(item => ({ id: randomUUID(), requirement: item.requirement }));
       const result = await this.executor.query(`WITH inserted AS (
-        INSERT INTO lingualoop_practices (teacher_id, title, conversation_theme, topic, level, duration_minutes, parameters, difficulty)
-        VALUES ($1::uuid, $2, $2, $3, $4, $5, $6::jsonb, $8) RETURNING *),
+        INSERT INTO lingualoop_practices (teacher_id, title, conversation_theme, topic, level, duration_minutes, parameters, difficulty, activity)
+        VALUES ($1::uuid, $2, $2, $3, $4, $5, $6::jsonb, $8, $9::jsonb) RETURNING *),
         inserted_image AS (
           INSERT INTO lingualoop_practice_images (practice_id, bytes, mime)
           SELECT id, $7::bytea, 'image/jpeg' FROM inserted WHERE $7::bytea IS NOT NULL RETURNING practice_id)
         SELECT p.*, a.name AS teacher_name, EXISTS (SELECT 1 FROM inserted_image) AS has_image FROM inserted AS p
-        INNER JOIN lingualoop_accounts AS a ON a.id = p.teacher_id`, [teacherId, input.title, 'everyday-conversation', input.setup.level, input.setup.durationMinutes, JSON.stringify(parameters), image?.bytes ?? null, input.setup.difficulty]);
+        INNER JOIN lingualoop_accounts AS a ON a.id = p.teacher_id`, [teacherId, input.title, 'everyday-conversation', input.setup.level, input.setup.durationMinutes, JSON.stringify(parameters), image?.bytes ?? null, input.setup.difficulty, JSON.stringify(parseActivityConfiguration(input.activity))]);
       if (result.rows.length !== 1) throw new TypeError();
       return practice(result.rows[0]);
     } catch { throw new PracticeCatalogueError(); }

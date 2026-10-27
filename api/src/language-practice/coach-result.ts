@@ -38,7 +38,7 @@ const MAX_CORRECTED_PHRASE_LENGTH = 300
 const MAX_FEEDBACK_LENGTH = 280
 const MAX_ASSISTANT_RESPONSE_LENGTH = 500
 const MAX_STRUCTURED_OUTPUT_LENGTH = 1_600
-const MAX_TRANSCRIPT_LENGTH = 4_000
+const MAX_TRANSCRIPT_LENGTH = 30_000
 
 const englishMarkers = new Set([
   'the', 'and', 'are', 'was', 'were', 'have', 'has', 'with', 'from', 'your',
@@ -152,7 +152,7 @@ function validate(value: unknown, transcript: string): CoachResultViolation[] {
     violations.push('assistant_response_language')
   }
   for (const evidence of [correctedPhrase, feedback]) {
-    if (hasClearLanguageSignal(evidence, englishMarkers, spanishMarkers)) {
+    if (hasClearLanguageSignal(evidence, spanishMarkers, englishMarkers)) {
       violations.push('spanish_evidence_language')
       break
     }

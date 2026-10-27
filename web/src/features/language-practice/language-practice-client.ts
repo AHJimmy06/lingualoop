@@ -1,3 +1,4 @@
+import { parseActivityConfiguration, type ActivityConfiguration } from './activity-configuration'
 import type { AuthSession } from '../../auth-session'
 import { isValidSetup, hasSetupKeys, isPracticeDifficulty, hasResponseDifficulty, parseCoverage, parsePractice, validateCreatePractice, validatePracticeImage, MAX_PRACTICE_IMAGE_BYTES } from './practice-contract'
 export const LANGUAGE_PRACTICE_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] as const
@@ -11,17 +12,17 @@ type LanguagePracticeTopic = (typeof LANGUAGE_PRACTICE_TOPICS)[number]
 type SessionStatus = 'ACTIVE' | 'EXPIRED' | 'COMPLETED'
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-const MAX_UPLOAD_BYTES = 2 * 1024 * 1024
+const MAX_UPLOAD_BYTES = 32 * 1024 * 1024
 const MAX_RESPONSE_AUDIO_BYTES = 8 * 1024 * 1024
 const MAX_COMPLETED_TURNS = 256
-const MAX_DETAIL_TEXT_LENGTH = 2000
+const MAX_DETAIL_TEXT_LENGTH = 30000
 // React StrictMode may run the report-loading effect twice in development. Share the
 // same POST while it is pending so the API's durable generation claim is not mistaken
 // for a report failure by the second mount.
 const pendingReportRequests = new Map<string, Promise<LanguagePracticeReport>>()
 const pendingSupportRequests = new Map<string, Promise<ReportLearningSupport>>()
 // The immediate turn response keeps the coach's 4,000-character transcript; session history is clipped to 2,000.
-const MAX_TURN_TRANSCRIPT_LENGTH = 4000
+const MAX_TURN_TRANSCRIPT_LENGTH = 30000
 const ACCEPTED_AUDIO_TYPES = new Set([
   'audio/webm', 'audio/webm;codecs=opus', 'audio/ogg', 'audio/ogg;codecs=opus',
   'audio/wav', 'audio/x-wav', 'audio/mp4',
@@ -36,8 +37,11 @@ export type PracticeSetup = {
 }
 export type ParsedPracticeSetup = Omit<PracticeSetup, 'difficulty'> & { difficulty: PracticeDifficulty | null }
 export type SessionTurn = { sequence: number; transcript: string; assistantResponse: string; completedAt: string }
-export type FinishSessionResponse = { id: string; status: 'COMPLETED' | 'EXPIRED' }
+export type FinishSessionResponse = { id: string; status: 'COMPLETED' | 'EXPIRED' | 'DISCARDED' }
 export type SessionDetail = {
+  activity?: ActivityConfiguration
+  conversationTheme?: string | null
+  parameters?: { id: string; requirement: string }[]
   id: string
   status: SessionStatus
   difficulty: PracticeDifficulty | null
@@ -76,10 +80,11 @@ export type ParameterCoverage = {
   explanation: string
 }
 export type TeacherPractice = {
+  activity?: ActivityConfiguration;
   id: string; teacherId: string; teacherName: string; title: string; setup: ParsedPracticeSetup
   parameters: { id: string; requirement: string }[]; createdAt: string; hasImage: boolean
 }
-export type CreatePractice = { title: string; setup: Omit<PracticeSetup, 'topic'>; parameters: { requirement: string }[] }
+export type CreatePractice = { activity?: ActivityConfiguration; title: string; setup: Omit<PracticeSetup, 'topic'>; parameters: { requirement: string }[] }
 export type LanguagePracticeReport = {
   parameterCoverage: ParameterCoverage[]
   sessionId: string
@@ -178,7 +183,7 @@ export function boundedText(value: unknown, maximum: number, allowEmpty = false)
 
 function parseSession(value: unknown): SessionDetail {
   if (!isRecord(value) || !hasSetupKeys(value, [
-    'id', 'status', 'level', 'topic', 'durationMinutes', 'startedAt', 'expiresAt', 'remainingMs', 'turnInProgress', 'turns',
+    'id', 'status', 'level', 'topic', 'durationMinutes', 'startedAt', 'expiresAt', 'remainingMs', 'turnInProgress', 'turns', ...(Object.hasOwn(value, 'activity') ? ['activity'] : []), ...(Object.hasOwn(value, 'conversationTheme') ? ['conversationTheme'] : []), ...(Object.hasOwn(value, 'parameters') ? ['parameters'] : []),
   ]) || !hasResponseDifficulty(value) || !isUuid(value.id) ||
       !LANGUAGE_PRACTICE_LEVELS.includes(value.level as LanguagePracticeLevel) ||
       !LANGUAGE_PRACTICE_TOPICS.includes(value.topic as LanguagePracticeTopic) ||
@@ -189,6 +194,8 @@ function parseSession(value: unknown): SessionDetail {
       value.turnInProgress !== false || !Array.isArray(value.turns) || value.turns.length > MAX_COMPLETED_TURNS) {
     throw new LanguagePracticeClientError('invalid-response')
   }
+  if (value.conversationTheme !== undefined && value.conversationTheme !== null && !boundedText(value.conversationTheme, 120)) throw new LanguagePracticeClientError('invalid-response')
+  if (value.parameters !== undefined && (!Array.isArray(value.parameters) || value.parameters.length > 20 || value.parameters.some(p => !isRecord(p) || !hasExactKeys(p, ['id', 'requirement']) || !isUuid(p.id) || !boundedText(p.requirement, 500)))) throw new LanguagePracticeClientError('invalid-response')
   const turns = value.turns.map((turn): SessionTurn => {
     if (!isRecord(turn) || !hasExactKeys(turn, ['sequence', 'transcript', 'assistantResponse', 'completedAt']) ||
         typeof turn.sequence !== 'number' || !Number.isSafeInteger(turn.sequence) || turn.sequence < 1 ||
@@ -204,6 +211,9 @@ function parseSession(value: unknown): SessionDetail {
     }
   })
   return {
+    ...(value.activity === undefined ? {} : { activity: parseActivityConfiguration(value.activity) }),
+    ...(value.conversationTheme === undefined ? {} : { conversationTheme: value.conversationTheme as string | null }),
+    ...(value.parameters === undefined ? {} : { parameters: value.parameters as { id: string; requirement: string }[] }),
     id: value.id,
     status: value.status as SessionStatus,
     difficulty: isPracticeDifficulty(value.difficulty) ? value.difficulty : null,
@@ -262,7 +272,7 @@ function parseTurn(value: unknown): LanguagePracticeTurnResponse {
 
 function parseFinish(value: unknown, expectedSessionId: string): FinishSessionResponse {
   if (!isRecord(value) || !hasExactKeys(value, ['id', 'status']) || value.id !== expectedSessionId ||
-      !isUuid(value.id) || (value.status !== 'COMPLETED' && value.status !== 'EXPIRED')) {
+      !isUuid(value.id) || (value.status !== 'COMPLETED' && value.status !== 'EXPIRED' && value.status !== 'DISCARDED')) {
     throw new LanguagePracticeClientError('invalid-response')
   }
   return { id: value.id, status: value.status }
@@ -349,6 +359,18 @@ export class LanguagePracticeClient {
     this.validateUuid(id)
     const response = await this.session.getWithRefresh(`/api/language-practice/practices/${id}/image`)
     if (!response) throw new LanguagePracticeClientError(this.session.authenticated ? 'unavailable' : 'unauthenticated')
+    return this.readImage(response)
+  }
+
+  async getSessionImage(id: string): Promise<Blob | null> {
+    this.validateUuid(id)
+    const response = await this.session.getWithRefresh(`/api/language-practice/sessions/${id}/image`)
+    if (!response) throw new LanguagePracticeClientError(this.session.authenticated ? 'unavailable' : 'unauthenticated')
+    if (response.status === 204) return null
+    return this.readImage(response)
+  }
+
+  private async readImage(response: Response): Promise<Blob> {
     if (response.status !== 200) throw responseError(response.status)
     if (response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase() !== 'image/jpeg' ||
         Number(response.headers.get('content-length')) > MAX_PRACTICE_IMAGE_BYTES || !response.body) throw new LanguagePracticeClientError('invalid-response')

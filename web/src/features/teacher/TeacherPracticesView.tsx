@@ -6,12 +6,14 @@ import { LanguagePracticeClient, LanguagePracticeClientError, LANGUAGE_PRACTICE_
 import { validateCreatePractice, validatePracticeImage } from '../language-practice/practice-contract';
 import { difficultyLabel } from '../language-practice/practice-preferences';
 import { PracticeCardPreview } from '../language-practice/PracticeCardPreview';
+import { type ActivityConfiguration } from '../language-practice/activity-configuration';
 import { TeacherPracticesDialog } from './TeacherPracticesDialog';
 
 export function TeacherPracticesView() {
   const client = useMemo(() => new LanguagePracticeClient(authSession), []);
   const [catalogueVersion, setCatalogueVersion] = useState(0);
   const [title, setTitle] = useState('');
+  const [activity, setActivity] = useState<ActivityConfiguration>({ mode: 'conversation', aiRole: '', location: '' });
   const [setup, setSetup] = useState<CreatePractice['setup']>({ level: 'A1', durationMinutes: 5, difficulty: 'medium' });
   const [image, setImage] = useState<File | undefined>();
   const [preview, setPreview] = useState<{ file: File; url: string } | null>(null);
@@ -40,7 +42,7 @@ export function TeacherPracticesView() {
     try { validatePracticeImage(file); setImage(file); }
     catch { setImageError('Choose a JPEG, PNG or WebP image no larger than 2 MiB.'); }
   }
-  const input = { title: title.trim(), setup, parameters: requirements.map(requirement => ({ requirement: requirement.trim() })) };
+  const input = { title: title.trim(), setup, activity, parameters: requirements.map(requirement => ({ requirement: requirement.trim() })) };
   let valid = true;
   try { validateCreatePractice(input); } catch { valid = false; }
   async function submit(event: FormEvent) {
@@ -51,7 +53,7 @@ export function TeacherPracticesView() {
       await client.createPractice(input, image);
       setImage(undefined); setImageError('');
       if (imagePicker.current) imagePicker.current.value = '';
-      setTitle(''); setRequirements(['']); setMessage('Practice created and available to all students.');
+      setActivity({ mode: 'conversation', aiRole: '', location: '' }); setTitle(''); setRequirements(['']); setMessage('Practice created and available to all students.');
       setCatalogueVersion(value => value + 1);
     } catch (failure) {
       setError(failure instanceof LanguagePracticeClientError ? failure.message : 'The practice was not confirmed. Try again.');
@@ -63,9 +65,18 @@ export function TeacherPracticesView() {
     <form className="grid w-full min-w-0 max-w-3xl gap-5 rounded-2xl border border-white/80 bg-white/90 p-4 shadow-lg shadow-slate-900/5 backdrop-blur sm:p-6" onSubmit={event => void submit(event)} aria-label="Create practice">
       <h2 className="text-lg font-semibold">Create practice</h2>
       <label className="grid gap-2 text-sm">Conversation theme<input className="rounded-md border bg-background p-3" required maxLength={120} value={title} disabled={busy} onChange={event => setTitle(event.target.value)} /></label>
+      <fieldset disabled={busy} className="grid gap-4"><legend className="mb-3 text-sm font-semibold">Activity context</legend>
+        <label className="grid gap-2 text-sm">Activity mode<select className="rounded-md border bg-background p-3" value={activity.mode} onChange={event => setActivity({ ...activity, mode: event.target.value as ActivityConfiguration['mode'] })}>
+          <option value="conversation">Conversation with an AI partner</option><option value="single-response">Single response assessment</option>
+        </select></label>
+        <label className="grid gap-2 text-sm">Who is the AI? (role)<textarea className="rounded-md border bg-background p-3" maxLength={500} value={activity.aiRole} placeholder="A friend walking with the learner; a shop assistant; an interviewer" onChange={event => setActivity({ ...activity, aiRole: event.target.value })} /></label>
+        <label className="grid gap-2 text-sm">Where are we? (setting)<textarea className="rounded-md border bg-background p-3" maxLength={1000} value={activity.location} placeholder="A wooded park. We are walking with a small group on a sunny afternoon." onChange={event => setActivity({ ...activity, location: event.target.value })} /></label>
+        <p className="text-sm text-muted-foreground">Describe the role and place here; keep assessment goals in the requirements below. The AI does not analyse the image.</p>
+        {activity.mode === 'single-response' && <p className="text-sm text-muted-foreground">The student records one independent response and stops manually. No AI conversation follows; the response goes directly to the report. The duration below does not limit this response. Technical maximum: 10 minutes / 32 MiB.</p>}
+      </fieldset>
       <fieldset disabled={busy} className="grid gap-4 sm:grid-cols-2"><legend className="mb-3 text-sm font-semibold">Fixed conversation settings</legend>
         <label className="grid gap-2 text-sm">CEFR target level<select className="rounded-md border bg-background p-3" value={setup.level} onChange={event => setSetup({ ...setup, level: event.target.value as CreatePractice['setup']['level'] })}>{LANGUAGE_PRACTICE_LEVELS.map(value => <option key={value}>{value}</option>)}</select></label>
-        <label className="grid gap-2 text-sm">Duration<select className="rounded-md border bg-background p-3" value={setup.durationMinutes} onChange={event => setSetup({ ...setup, durationMinutes: Number(event.target.value) as CreatePractice['setup']['durationMinutes'] })}>{LANGUAGE_PRACTICE_DURATIONS.map(value => <option key={value} value={value}>{value} minutes</option>)}</select></label>
+        <label className="grid gap-2 text-sm">Conversation duration<select disabled={activity.mode === 'single-response'} className="rounded-md border bg-background p-3" value={setup.durationMinutes} onChange={event => setSetup({ ...setup, durationMinutes: Number(event.target.value) as CreatePractice['setup']['durationMinutes'] })}>{LANGUAGE_PRACTICE_DURATIONS.map(value => <option key={value} value={value}>{value} minutes</option>)}</select></label>
         <label className="grid gap-2 text-sm">Task difficulty<select className="rounded-md border bg-background p-3" value={setup.difficulty} onChange={event => setSetup({ ...setup, difficulty: event.target.value as CreatePractice['setup']['difficulty'] })}>{LANGUAGE_PRACTICE_DIFFICULTIES.map(value => <option key={value} value={value}>{difficultyLabel(value)}</option>)}</select></label>
         <p className="text-sm text-muted-foreground sm:col-span-2">Difficulty is fixed task demand, not assessed proficiency. It does not change the CEFR target.</p>
       </fieldset>
@@ -81,7 +92,7 @@ export function TeacherPracticesView() {
         <label className="grid min-w-0 gap-2 text-sm">JPEG, PNG or WebP · up to 2 MiB
           <input ref={imagePicker} className="w-full min-w-0 rounded-md border p-3" type="file" accept="image/jpeg,image/png,image/webp" onChange={event => chooseImage(event.target.files?.[0])} />
         </label>
-        <p className="text-sm text-muted-foreground">Cover only; not used by the conversation or report AI.</p>
+        <p className="text-sm text-muted-foreground">Shown to the student during the activity; not analysed by the conversation or report AI.</p>
         {(image || imageError) && <Button type="button" variant="outline" onClick={removeImage}>Remove image</Button>}
         {imageError && <p role="alert">{imageError}</p>}
       </fieldset>

@@ -22,7 +22,7 @@ const row = {
 
 async function createServer(t, turnStore = { async listCompletedTurns(owner, id) {
   return owner === ownerId && id === sessionId ? completedTurns : [];
-} }, { reportStore, identityOwner = ownerId, finishError } = {}) {
+} }, { reportStore, identityOwner = ownerId, finishError, finishStatus = 'COMPLETED', image = null, imageError } = {}) {
   const calls = [];
   const turnCalls = [];
   const reportCalls = [];
@@ -40,10 +40,15 @@ async function createServer(t, turnStore = { async listCompletedTurns(owner, id)
           calls.push({ owner, id });
           return owner === ownerId && id === sessionId ? row : null;
         },
+        async getSessionImage(owner, id) {
+          assert.equal(owner, ownerId); assert.equal(id, sessionId);
+          if (imageError) throw Error('storage failed');
+          return image;
+        },
         async finishSession(owner, id) {
           finishCalls.push({ owner, id });
           if (finishError) throw finishError;
-          return owner === ownerId && id === sessionId ? { id, status: 'COMPLETED' } : null;
+          return owner === ownerId && id === sessionId ? { id, status: finishStatus } : null;
         },
       } },
       { provide: require('../../dist/language-practice/language-practice-session.providers.js').LANGUAGE_PRACTICE_TURN_STORE,
@@ -60,9 +65,9 @@ async function createServer(t, turnStore = { async listCompletedTurns(owner, id)
         } } },
       { provide: LinguaLoopTokenService, useValue: { async verifyBearerToken(value) {
         if (value !== token) throw new InvalidBearerTokenError();
-        return { issuer: 'google', subject: 'verified-subject', sessionId };
+        return { issuer: 'local', subject: ownerId, sessionId };
       } } },
-      { provide: LINGUALOOP_IDENTITY_STORE, useValue: { async findOwnerByIdentity() { return identityOwner; }, async findApprovalByOwner() { return { email: 'student@example.test', role: 'student' }; } } },
+      { provide: LINGUALOOP_IDENTITY_STORE, useValue: { async findOwnerByIdentity() { return identityOwner; }, async findAccountByOwner() { return { name: 'Student', email: 'student@example.test', role: 'student' }; } } },
       { provide: LINGUALOOP_SESSION_STORE, useValue: { async isSessionActive(owner, session) { return owner === identityOwner && session === sessionId; } } },
       ConfiguredVerifiedRequestGuard,
       require('../../dist/auth/role.guard.js').RoleGuard,
@@ -94,8 +99,8 @@ test('options are protected and preserve the original catalog labels and limits'
       { code: 'everyday-conversation', label: 'Everyday conversation' },
     ],
     acceptedMimeTypes: ['audio/webm', 'audio/webm;codecs=opus', 'audio/ogg', 'audio/ogg;codecs=opus', 'audio/wav', 'audio/x-wav', 'audio/mp4'],
-    maxFileSizeBytes: 2097152,
-    maxDurationMs: 20000,
+    maxFileSizeBytes: 33554432,
+    maxDurationMs: 600000,
   });
 });
 
@@ -108,7 +113,7 @@ test('session creation is protected, validates the catalog, and uses verified ow
   const response = await fetch(endpoint, { method: 'POST', headers: { ...authHeaders, 'content-type': 'application/json' }, body: JSON.stringify({ level: 'B1', topic: 'travel', durationMinutes: 10 }) });
   assert.equal(response.status, 201);
   assert.deepEqual(await response.json(), { ...row, turns: [] });
-  assert.deepEqual(calls, [{ owner: ownerId, setup: { level: 'B1', topic: 'travel', durationMinutes: 10 } }]);
+  assert.deepEqual(calls, [{ owner: ownerId, setup: { level: 'B1', topic: 'travel', durationMinutes: 10, difficulty: 'medium' } }]);
 });
 
 test('session detail is protected and returns owner-scoped completed turns', async (t) => {
@@ -248,4 +253,40 @@ test('completed turn store failures return a generic unavailable response', asyn
   const response = await fetch(`${base}/language-practice/sessions/${sessionId}`, { headers: authHeaders });
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), { statusCode: 503, message: 'Language practice session is unavailable.' });
+});
+
+
+test('session image endpoint is private, owner-scoped and survives repeated loads', async t => {
+  const bytes = Buffer.from([255, 216, 255, 217]);
+  const { base } = await createServer(t, undefined, { image: { bytes, mime: 'image/jpeg' } });
+  const url = `${base}/language-practice/sessions/${sessionId}/image`;
+  assert.equal((await fetch(url)).status, 401);
+  for (let load = 0; load < 2; load++) {
+    const response = await fetch(url, { headers: authHeaders });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'image/jpeg');
+    assert.equal(response.headers.get('cache-control'), 'private, no-store');
+    assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
+  }
+  assert.equal((await fetch(`${base}/language-practice/sessions/invalid/image`, { headers: authHeaders })).status, 400);
+});
+test('session image distinguishes no image, foreign session and storage failure', async t => {
+  for (const [options, status] of [[{}, 204], [{ identityOwner: otherOwnerId }, 404], [{ imageError: true }, 503]]) {
+    const { base } = await createServer(t, undefined, options);
+    const response = await fetch(`${base}/language-practice/sessions/${sessionId}/image`, { headers: authHeaders });
+    assert.equal(response.status, status);
+    if (status === 204) assert.equal(await response.text(), '');
+  }
+});
+
+
+test('finish returns DISCARDED for an empty session without invoking reports', async t => {
+  const {base, reportCalls} = await createServer(t, undefined, {finishStatus: 'DISCARDED'});
+  const response = await fetch(`${base}/language-practice/sessions/${sessionId}/finish`, {
+    method: 'POST', headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'}, body: '{}'
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {id: sessionId, status: 'DISCARDED'});
+  assert.deepEqual(reportCalls, []);
 });

@@ -6,6 +6,7 @@ const {
 const { LanguagePracticeReportAiAdapter } = require('../../dist/language-practice/language-practice-report-ai.js');
 
 const env = {
+  LINGUALOOP_OPENAI_COACH_ENABLED: 'true',
   LINGUALOOP_OPENAI_API_KEY_FILE: '/home/test/.local/share/lingualoop/coach.env',
   LANGUAGE_PRACTICE_OPENAI_MODEL: 'gpt-5.6-luna',
 };

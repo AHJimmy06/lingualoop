@@ -320,7 +320,7 @@ test('invalid UUID, MIME, and size fail before reserve and preserve caller audio
     [OWNER, 'bad', CLIENT, audio()],
     [OWNER, SESSION, 'bad', audio()],
     [OWNER, SESSION, CLIENT, { buffer: Buffer.from('x'), mimeType: 'text/plain' }],
-    [OWNER, SESSION, CLIENT, { buffer: Buffer.alloc(2 * 1024 * 1024 + 1), mimeType: 'audio/webm' }],
+    [OWNER, SESSION, CLIENT, { buffer: Buffer.alloc(32 * 1024 * 1024 + 1), mimeType: 'audio/webm' }],
   ]) {
     const { service, calls } = fixture();
     const original = Buffer.from(supplied.buffer);

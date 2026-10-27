@@ -13,21 +13,21 @@ const turns = [
     sequence: 7,
     transcript: 'Ayer yo voy al parque.',
     spanishCorrectionEvidence: JSON.stringify({
-      correctedPhrase: 'Ayer fui al parque.',
-      feedback: "El verbo 'voy' cambia a 'fui' para expresar el pasado.",
+      correctedPhrase: 'Yesterday I went to the park.',
+      feedback: "Use the past tense verb 'went' instead of 'go'.",
     }),
   },
 ];
 const output = {
-  summary: 'La sesión incluyó una intervención sobre una visita al parque.',
+  summary: 'The response described a visit to the park.',
   corrections: [{
     sequence: 7,
     original: 'Ayer yo voy al parque.',
-    correctedPhrase: 'Ayer fui al parque.',
-    explanation: "El verbo 'voy' cambia a 'fui' para expresar el pasado.",
+    correctedPhrase: 'Yesterday I went to the park.',
+    explanation: "Use the past tense verb 'went' instead of 'go'.",
   }],
-  strengths: ['Compartió una experiencia personal en español.'],
-  recommendations: ['Practique el uso del pasado en otras frases.'],
+  strengths: ['You described a personal experience.'],
+  recommendations: ['Practise using the past tense in other sentences.'],
 };
 function fakeClient(response) {
   const calls = [];
@@ -66,7 +66,7 @@ test('custom-practice evaluation explicitly follows teacher goals, semantic evid
   const parameter = { id: '11111111-1111-4111-8111-111111111111', requirement: 'Ask for directions politely.' };
   const withCoverage = { ...output, parameterCoverage: [{
     parameterId: parameter.id, requirement: parameter.requirement, status: 'unassessed', evidenceSequences: [],
-    explanation: 'No hay evidencia suficiente para evaluar este requisito.',
+    explanation: 'There is not enough evidence to assess this goal.',
   }] };
   const fake = fakeClient({ status: 'completed', output_text: JSON.stringify(withCoverage) });
   const adapter = new LanguagePracticeReportAiAdapter(fake.client, 'model');
@@ -129,7 +129,7 @@ test('bounds inputs before calling the client and never drops turns silently', a
   const fake = fakeClient({ status: 'completed', output_text: JSON.stringify(output) });
   const adapter = new LanguagePracticeReportAiAdapter(fake.client, 'model');
   await assert.rejects(adapter.generate(Array.from({ length: 257 }, (_, sequence) => ({ ...turns[0], sequence }))));
-  await assert.rejects(adapter.generate([{ ...turns[0], transcript: 'x'.repeat(5001) }]));
+  await assert.rejects(adapter.generate([{ ...turns[0], transcript: 'x'.repeat(30001) }]));
   await assert.rejects(adapter.generate([{ ...turns[0], spanishCorrectionEvidence: 'x'.repeat(2001) }]));
   await assert.rejects(adapter.generate(Array.from({ length: 21 }, (_, sequence) => ({
     sequence: sequence + 1, transcript: 'x'.repeat(4000), spanishCorrectionEvidence: null,
@@ -223,7 +223,7 @@ const parameters = [{ id: '11111111-1111-4111-8111-111111111111', requirement: '
 function proseReport(field, text) {
   const report = { ...output, corrections: [], strengths: [], recommendations: [], parameterCoverage: [{
     parameterId: parameters[0].id, requirement: parameters[0].requirement,
-    status: 'unassessed', evidenceSequences: [], explanation: 'No hay evidencia suficiente ni oportunidad de evaluación conocida.',
+    status: 'unassessed', evidenceSequences: [], explanation: 'There is not enough evidence or a known opportunity to assess this goal.',
   }] };
   if (field === 'coverage') report.parameterCoverage[0].explanation = text;
   else report[field] = field === 'summary' ? text : [text];
@@ -273,7 +273,8 @@ test('bounded bilingual limitations and claims are checked independently in ever
         const report = proseReport(field, text);
         const fake = fakeClient({ status: 'completed', output_text: JSON.stringify(report) });
         const promise = new LanguagePracticeReportAiAdapter(fake.client, 'offline').generate(turns, { parameters });
-        if (allowed) assert.deepEqual(await promise, report);
+        if (allowed && /No hay|Esta sesión|El estudiante/.test(text)) await assert.rejects(promise, error => getLanguagePracticeReportAiDiagnostic(error).code === 'output_schema');
+        else if (allowed) assert.deepEqual(await promise, report);
         else await assert.rejects(promise, error => {
           assert.equal(error.message, 'The session report is temporarily unavailable');
           assert.deepEqual(getLanguagePracticeReportAiDiagnostic(error), { code: 'output_unsupported_claims', component: 'ai_output' });
@@ -298,7 +299,7 @@ test('coverage preserves copied requirements, order and learner sequence linkage
   const twoParameters = [...parameters, { id: '22222222-2222-4222-8222-222222222222', requirement: 'Explain a past visit.' }];
   const report = proseReport('summary', output.summary);
   report.parameterCoverage.push({ parameterId: twoParameters[1].id, requirement: twoParameters[1].requirement,
-    status: 'met', evidenceSequences: [7], explanation: 'En el turno 7 expresó una visita: «Ayer yo voy al parque».',
+    status: 'met', evidenceSequences: [7], explanation: 'Turn 7 describes a visit to the park.',
   });
   for (const invalid of [false, true]) {
     const candidate = structuredClone(report);
@@ -316,7 +317,7 @@ test('coverage preserves copied requirements, order and learner sequence linkage
 test('a disclaimer cannot exempt another field or linked positive coverage', async () => {
   for (const field of ['strengths', 'recommendations', 'coverage']) {
     const report = proseReport(field, 'Su pronunciación es excelente.');
-    report.summary = limitations[1];
+    report.summary = limitations[0];
     report.parameterCoverage[0].status = 'met';
     report.parameterCoverage[0].evidenceSequences = [7];
     const fake = fakeClient({ status: 'completed', output_text: JSON.stringify(report) });
@@ -328,14 +329,14 @@ test('a disclaimer cannot exempt another field or linked positive coverage', asy
   }
 });
 test('copied learner and correction text is excluded but exact stored feedback is guarded', async () => {
-  for (const feedback of [limitations[1], 'Su pronunciación es excelente.', polarityClaims[0], polarityClaims[6]]) {
+  for (const feedback of [limitations[0], 'Su pronunciación es excelente.', polarityClaims[0], polarityClaims[6]]) {
     const transcript = 'CEFR B2 pronunciation';
     const correctedPhrase = 'Excellent pronunciation';
     const linkedTurns = [{ sequence: 7, transcript, spanishCorrectionEvidence: JSON.stringify({ correctedPhrase, feedback }) }];
     const report = { ...output, corrections: [{ sequence: 7, original: transcript, correctedPhrase, explanation: feedback }] };
     const fake = fakeClient({ status: 'completed', output_text: JSON.stringify(report) });
     const promise = new LanguagePracticeReportAiAdapter(fake.client, 'offline').generate(linkedTurns);
-    if (feedback === limitations[1]) assert.deepEqual(await promise, report);
+    if (feedback === limitations[0]) assert.deepEqual(await promise, report);
     else await assert.rejects(promise, error => {
       assert.equal(getLanguagePracticeReportAiDiagnostic(error).code, 'output_unsupported_claims');
       return true;
@@ -361,4 +362,12 @@ test('reference-informed instructions bound learner-only evidence and coverage o
 test('does not construct a provider client, read credentials, or configure a model', () => {
   const source = fs.readFileSync(path.join(__dirname, '../../src/language-practice/language-practice-report-ai.ts'), 'utf8');
   assert.doesNotMatch(source, /new OpenAI|process\.env|API_KEY|fetch\s*\(|https?:\/\//i);
+});
+
+
+test('report instructions explicitly require English including goal explanations',async()=>{
+ const fake=fakeClient({status:'completed',output_text:JSON.stringify(output)});
+ await new LanguagePracticeReportAiAdapter(fake.client,'model').generate(turns);
+ assert.match(fake.calls[0].input[0].content,/All generated prose must be English/);
+ assert.doesNotMatch(fake.calls[0].input[0].content,/informe de sesión en español/);
 });

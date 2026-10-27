@@ -37,7 +37,7 @@ async function waitForPostgres(config) {
   throw new Error(`Disposable PostgreSQL did not become ready: ${lastError?.message ?? 'timeout'}`);
 }
 
-test('five-minute lease serializes later turns and preserves replay, owner checks, and fencing', {
+test('twenty-minute lease serializes later turns and preserves replay, owner checks, and fencing', {
   timeout: 180_000,
 }, async () => {
   let container;
@@ -62,7 +62,7 @@ test('five-minute lease serializes later turns and preserves replay, owner check
     await client.connect();
 
     await client.query(
-      "INSERT INTO lingualoop_accounts (id, issuer, subject) VALUES ($1, 'google', 'lease-test-owner')",
+      "INSERT INTO lingualoop_accounts (id, issuer, subject, email, name, role) VALUES ($1::uuid, 'local', $1::uuid::text, $1::uuid::text || '@example.test', 'Test', 'student')",
       [OWNER],
     );
     await client.query(
@@ -84,8 +84,8 @@ test('five-minute lease serializes later turns and preserves replay, owner check
       'SELECT EXTRACT(EPOCH FROM ($1::timestamptz - clock_timestamp())) AS seconds',
       [admitted.lease_expires_at],
     )).rows[0].seconds;
-    assert.ok(Number(remaining) <= 300 && Number(remaining) > 295,
-      `returned lease expiry should be about five minutes away, got ${remaining}s`);
+    assert.ok(Number(remaining) <= 1200 && Number(remaining) > 1195,
+      `returned lease expiry should be about twenty minutes away, got ${remaining}s`);
 
     const replay = (await client.query(
       'SELECT * FROM lingualoop_reserve_language_practice_turn($1, $2, $3)',
@@ -136,8 +136,8 @@ test('five-minute lease serializes later turns and preserves replay, owner check
       'SELECT EXTRACT(EPOCH FROM ($1::timestamptz - clock_timestamp())) AS seconds',
       [nextTurn.lease_expires_at],
     )).rows[0].seconds;
-    assert.ok(Number(nextRemaining) <= 300 && Number(nextRemaining) > 295,
-      `reclaimed turn should receive a new five-minute lease, got ${nextRemaining}s`);
+    assert.ok(Number(nextRemaining) <= 1200 && Number(nextRemaining) > 1195,
+      `reclaimed turn should receive a new twenty-minute lease, got ${nextRemaining}s`);
 
     const expiredTurn = await client.query(
       'SELECT status, failure_code FROM lingualoop_language_practice_turns WHERE id = $1',

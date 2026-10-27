@@ -19,7 +19,7 @@ export type PracticeRuntimeConfiguration = {
 };
 type SttHost = { transcribe(path: string): Promise<string> };
 const READINESS_TIMEOUT_MS = 6 * 60_000;
-const MAX_REQUEST_MS = 90_000;
+const MAX_REQUEST_MS = 900_000;
 
 function isExactAbsolutePath(value: unknown): value is string {
   if (typeof value !== 'string' || value.length === 0 || value.includes('\0') || !isAbsolute(value) ||
@@ -125,7 +125,7 @@ export class PracticeRuntimeHost implements OnApplicationShutdown {
           }
           const transcript = (payload as { text: string }).text.trim();
           if (!transcript) throw new SttDiagnosticError('nemo_no_speech');
-          if (transcript.length > 4_000) throw new SttDiagnosticError('nemo_response_oversized');
+          if (transcript.length > 30_000) throw new SttDiagnosticError('nemo_response_oversized');
           return transcript;
         } catch (error) {
           if (error instanceof SttDiagnosticError) throw error;

@@ -52,7 +52,7 @@ function renderLiveSession(session, remainingMs = 60000) {
     if (request === 'react-router-dom') return { useParams: () => ({ sessionId: 'session-a' }), useNavigate: () => () => {}, Link: 'a' };
     if (request === '../../auth-session') return { authSession: {} };
     if (request === './language-practice-client') return { LanguagePracticeClient: class {} };
-    if (request === './PracticeScene') return { PracticeScene: 'PracticeScene' };
+    if (request === './SessionPracticeImage') return { SessionPracticeImage: 'SessionPracticeImage' };
     if (request === './PracticeRecorder') return { PracticeRecorder: 'PracticeRecorder' };
     if (request.startsWith('../../components/ui/')) return Object.fromEntries(
       ['Button', 'Bubble', 'BubbleContent', 'Message', 'MessageContent', 'MessageGroup', 'MessageHeader'].map(name => [name, name]));
@@ -102,7 +102,7 @@ test('rendered conversation stacks on narrow screens and uses equal shrinkable w
   assert.doesNotMatch(grid.props.className, /sm:grid-cols-|landscape:|24rem/);
   assert.match(grid.props.className, /items-start/);
   const children = React.Children.toArray(grid.props.children);
-  assert.equal(children[0].props.children.type, 'PracticeScene');
+  assert.equal(children[0].props.children.type, 'SessionPracticeImage');
   assert.equal(children[1].props['aria-labelledby'], 'conversation-title');
   assert.ok(nodes(children[1]).some(node => node.props['aria-label'] === 'Voice turn controls'), 'voice controls belong to conversation panel');
   assert.deepEqual(nodes(children[1]).filter(node => ['Refresh session', 'Finish practice'].includes(node.props['aria-label'])).map(node => node.props['aria-label']), ['Refresh session', 'Finish practice']);
@@ -159,15 +159,15 @@ test('desktop scene matches conversation height and top alignment with empty or 
     assert.ok(!sceneClasses.includes('md:self-center'), 'scene cannot be vertically offset');
     assert.ok(!sceneClasses.includes('self-center'), 'mobile scene alignment remains unchanged');
     assert.ok(grid.props.className.split(/\s+/).includes('items-start'), 'other grid children retain top alignment');
-    assert.equal(all.filter(node => node.type === 'PracticeScene').length, 1);
-    assert.equal(children[0].props.children.type, 'PracticeScene');
+    assert.equal(all.filter(node => node.type === 'SessionPracticeImage').length, 1);
+    assert.equal(children[0].props.children.type, 'SessionPracticeImage');
     assert.equal(children[1].props['aria-labelledby'], 'conversation-title');
     assert.match(children[1].props.className, /h-\[clamp\(18rem,45svh,32rem\)\]/);
     const history = nodes(children[1]).find(node => node.type === 'ol');
     if (turns.length) assert.match(history.props.className, /overflow-y-auto/);
     assert.doesNotMatch(children[0].props.className, /overflow-y-auto/);
     assert.ok(nodes(children[1]).some(node => node.props['aria-label'] === 'Voice turn controls'), 'voice controls belong to conversation panel');
-    assert.deepEqual(nodes(children[1]).filter(node => ['Refresh session', 'Finish practice'].includes(node.props['aria-label'])).map(node => node.props['aria-label']), ['Refresh session', 'Finish practice']);
+    assert.deepEqual(nodes(children[1]).filter(node => ['Refresh session', 'Finish practice', 'Exit practice'].includes(node.props['aria-label'])).map(node => node.props['aria-label']), ['Refresh session', turns.length ? 'Finish practice' : 'Exit practice']);
   }
 });
 
@@ -252,7 +252,7 @@ test('response audio attempts autoplay, exposes fallback replay, and revokes URL
 
 test('recorder is remounted per session and stale recorded callbacks cannot submit', () => {
   const view = fs.readFileSync(viewPath, 'utf8');
-  assert.ok(view.includes('{!turnController.pending && <PracticeRecorder key={sessionId} disabled={!active} onRecorded={onRecorded} onBusyChange={onRecorderBusyChange} onRecordingChange={onRecordingChange} actions={sessionActions} />}'));
+  assert.ok(view.includes('{!turnController.pending && <PracticeRecorder key={sessionId} disabled={!active || finishing} onRecorded={onRecorded} onBusyChange={onRecorderBusyChange} onRecordingChange={onRecordingChange} actions={sessionActions} />}'));
   assert.equal((view.match(/<PracticeRecorder\b/g) || []).length, 1);
   const callback = view.match(/const onRecorded = \(blob: Blob\) => \{([\s\S]*?)\n  \};/);
   assert.ok(callback, 'onRecorded callback should exist');
@@ -365,4 +365,49 @@ test('desktop panels share a viewport-based height while mobile remains vertical
   assert.ok(css.includes('--live-panel-height: clamp(18rem, calc(100svh - 10rem), 56rem)'));
   assert.match(grid.props.className, /grid-cols-1/);
   assert.doesNotMatch(grid.props.className, /(?:^|\s)content-center(?:\s|$)/);
+});
+test('independent mode labels a manual single response without a conversation countdown', () => {
+  const all = nodes(renderLiveSession({ ...session, turns: [], activity: { mode: 'single-response', aiRole: 'A friend', location: 'A wooded park' }, conversationTheme: 'Compare the photographs', parameters: [{ id: 'goal', requirement: 'Explain what the friends might enjoy.' }] }).render());
+  assert.equal(all.find(node => node.type === 'h1').props.children, 'Your independent response');
+  assert.equal(all.filter(node => node.props.role === 'timer').length, 0);
+  assert.ok(all.some(node => node.type === 'strong' && node.props.children === 'Recording safety limit'));
+  assert.ok(all.some(node => node.type === 'h2' && node.props.children === 'Your submitted response'));
+  assert.ok(all.some(node => node.type === 'li' && node.props.children === 'Explain what the friends might enjoy.'));
+});
+
+
+test('student live sessions do not render teacher-only role or setting in either mode', () => {
+  for (const mode of ['conversation', 'single-response']) {
+    const tree = renderLiveSession({ ...session, activity: { mode, aiRole: 'Teacher-only role', location: 'Teacher-only location' } }).render();
+    const all = nodes(tree);
+    assert.ok(!all.some(node => node.type === 'strong' && ['AI role:', 'Setting:'].includes(node.props.children)));
+    assert.doesNotMatch(JSON.stringify(tree), /Teacher-only role|Teacher-only location/);
+  }
+});
+
+
+test('requirements open from a right-aligned icon in the conversation header instead of a permanent context block', () => {
+  const custom = { ...session, activity: { mode: 'conversation', aiRole: 'Private role', location: 'Private setting' }, conversationTheme: 'A walk in the park', parameters: [{ id: 'goal', requirement: 'Give one reason.' }] };
+  const all = nodes(renderLiveSession(custom).render());
+  assert.ok(!all.some(n => n.props['aria-label'] === 'Activity context'));
+  const title = all.find(n => n.props.id === 'conversation-title');
+  const header = all.find(n => React.Children.toArray(n.props.children).some(child => child.props?.id === title.props.id));
+  assert.ok(header, 'requirements action shares the conversation heading row');
+  const action = nodes(header).find(n => n.props['aria-label'] === 'Requirements');
+  assert.ok(action);
+  assert.equal(action.props['aria-describedby'], 'requirements-tooltip');
+  assert.ok(nodes(header).some(n => n.props.className === 'ml-auto shrink-0'));
+  assert.ok(nodes(header).some(n => n.props.role === 'tooltip' && n.props.children === 'Requirements'));
+  assert.ok(all.some(n => n.props.children === 'Activity instructions'));
+  assert.ok(all.some(n => n.props.children === 'Give one reason.'));
+  assert.ok(all.some(n => n.props['aria-label'] === 'Close activity instructions'));
+  assert.doesNotMatch(JSON.stringify(all), /Private role|Private setting/);
+});
+
+
+test('empty session offers exit and routes discarded responses to catalogue without a report', () => {
+  const view = fs.readFileSync(viewPath, 'utf8');
+  assert.match(view, /session\?\.turns.length === 0 \? 'Exit practice' : 'Finish practice'/);
+  assert.match(view, /result.status === 'DISCARDED'[\s\S]*?navigate\('\/language-practice', \{ replace: true \}\);\s*return;/);
+  assert.match(view, /Exit practice — discard without a report/);
 });

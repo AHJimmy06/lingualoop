@@ -25,7 +25,7 @@ const { LanguagePracticeClient } = require('../src/features/language-practice/la
 const optionModule = require('../src/features/language-practice/practice-options.ts');
 const { LanguagePracticeSetupView, DefaultTopicTiles } = require('../src/features/language-practice/LanguagePracticeSetupView.tsx');
 const { PracticeSettingsDialog } = require('../src/features/language-practice/PracticeSettingsDialog.tsx');
-const { PracticeCards, PracticeCatalogue, CustomPracticeView } = require('../src/features/language-practice/PracticeCatalogue.tsx');
+const { PracticeCards, PracticeCatalogue, CustomPracticeView, PracticeDetails } = require('../src/features/language-practice/PracticeCatalogue.tsx');
 const { SubmissionsTable } = require('../src/features/teacher/TeacherResultsView.tsx');
 const { TeacherPracticesDialog } = require('../src/features/teacher/TeacherPracticesDialog.tsx');
 const { TeacherResultsClient } = require('../src/features/teacher/teacher-results-client.ts');
@@ -109,7 +109,7 @@ test('settings drafts cancel without changing defaults, and save level/duration/
     assert.deepEqual(saved, []);
     tree = h.render(); tree.props.onOpenChange(true); tree = h.render();
     assert.equal(nodes(tree).find(node => node.type === 'select').props.value, 'A1');
-    nodes(tree).filter(node => node.type === 'select')[1].props.onChange({ target: { value: '15' } });
+    nodes(tree).filter(node => node.type === 'select' && !['conversation', 'single-response'].includes(node.props.value))[1].props.onChange({ target: { value: '15' } });
     find(h.render(), node => node.type === 'form').props.onSubmit({ preventDefault() {} });
     assert.deepEqual(saved, [{ level: 'A1', durationMinutes: 15, difficulty: 'medium' }]);
   } finally { h.restore(); }
@@ -370,10 +370,10 @@ test('opening and closing saved browser preserves draft fields and preview witho
   try {
     let tree = h.render();
     find(tree, node => node.type === 'input' && node.props.maxLength === 120).props.onChange({ target: { value: 'Unsaved theme' } });
-    find(tree, node => node.type === 'textarea').props.onChange({ target: { value: 'Unsaved requirement' } });
-    nodes(tree).filter(node => node.type === 'select')[0].props.onChange({ target: { value: 'C1' } });
+    find(tree, node => node.type === 'textarea' && !node.props.placeholder).props.onChange({ target: { value: 'Unsaved requirement' } });
+    nodes(tree).filter(node => node.type === 'select' && !['conversation', 'single-response'].includes(node.props.value))[0].props.onChange({ target: { value: 'C1' } });
     tree = h.render();
-    nodes(tree).filter(node => node.type === 'select')[1].props.onChange({ target: { value: '15' } });
+    nodes(tree).filter(node => node.type === 'select' && !['conversation', 'single-response'].includes(node.props.value))[1].props.onChange({ target: { value: '15' } });
     tree = h.render();
     const { onImageError: _before, ...draft } = find(tree, node => node.type === PracticeCardPreview).props;
     const browserProps = find(tree, node => node.type === TeacherPracticesDialog).props;
@@ -399,4 +399,20 @@ test('shared report renders exact evidence and empty states without student-muta
   assert.doesNotMatch(html, /Finish practice|Start recording|Start practice|<script>/);
   assert.match(fs.readFileSync(path.join(__dirname, '../src/features/teacher/TeacherResultsView.tsx'), 'utf8'), /<PracticeReportContent report=\{report\} \/>/);
   assert.match(fs.readFileSync(path.join(__dirname, '../src/features/language-practice/PracticeReportView.tsx'), 'utf8'), /<PracticeReportContent report=\{report\} session=\{session\} learningSupport=\{learningSupport\}/);
+});
+
+
+test('student practice details omit teacher scenario fields while teacher review can show them', () => {
+  const practice = { id: 'local', teacherName: 'Teacher', title: 'Park practice', setup: { topic: 'travel', level: 'B2', durationMinutes: 10, difficulty: 'medium' }, hasImage: false, parameters: [{ id: 'goal', requirement: 'Explain your opinion.' }], activity: { mode: 'conversation', aiRole: 'Teacher-only character', location: 'Teacher-only setting' } };
+  const student = renderToStaticMarkup(React.createElement(PracticeDetails, { practice }));
+  assert.doesNotMatch(student, /AI role:|Setting:|Teacher-only character|Teacher-only setting/);
+  assert.match(student, /Explain your opinion/);
+  const teacher = renderToStaticMarkup(React.createElement(PracticeDetails, { practice, showTeacherContext: true }));
+  assert.match(teacher, /AI role:|Teacher-only character/);
+  assert.match(teacher, /Setting:|Teacher-only setting/);
+  const source = fs.readFileSync(path.join(__dirname, '../src/features/language-practice/PracticeCatalogue.tsx'), 'utf8');
+  assert.match(source, /max-w-5xl/);
+  assert.match(source, /h-52 w-full rounded-lg object-contain sm:h-64/);
+  assert.match(source, /w-\[calc\(100%_-_2rem\)\]/);
+  assert.match(source, /max-h-\[90svh\]/);
 });

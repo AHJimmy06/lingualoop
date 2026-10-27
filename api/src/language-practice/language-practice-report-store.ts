@@ -1,3 +1,4 @@
+import { parseActivityConfiguration, type ActivityConfiguration } from './activity-configuration';
 import { randomUUID } from 'node:crypto';
 import { parsePracticeDifficulty, type PracticeDifficulty } from './language-practice-session-store';
 import { practiceTopicLabel } from './practice-topic-labels';
@@ -31,6 +32,7 @@ export type BeginAiReportResult =
       level: string;
       difficulty: PracticeDifficulty | null;
       parameters: PracticeParameter[];
+      activity?: ActivityConfiguration;
     };
 
 export type BeginLearningSupportResult =
@@ -54,14 +56,14 @@ export class LanguagePracticeReportAdmissionError extends Error {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const LOCK_SESSION_SQL = `
-  SELECT status, expires_at, active_turn_lease_token, topic, level, difficulty, parameters_snapshot, conversation_theme_snapshot,
+  SELECT status, expires_at, active_turn_lease_token, topic, level, difficulty, parameters_snapshot, conversation_theme_snapshot, activity_snapshot,
     expires_at <= clock_timestamp() AS elapsed
   FROM lingualoop_language_practice_sessions
   WHERE owner_id = $1::uuid AND id = $2::uuid
   FOR UPDATE
 `;
 const FIND_REPORT_SQL = `
-  SELECT r.content, r.generated_with_ai, r.created_at, r.parameter_coverage, s.parameters_snapshot,
+  SELECT r.content, r.report_language, r.generated_with_ai, r.created_at, r.parameter_coverage, s.parameters_snapshot,
     ARRAY(SELECT t.sequence FROM lingualoop_language_practice_turns AS t
       WHERE t.session_id = s.id AND t.status = 'COMPLETED' AND btrim(t.transcript) <> '') AS student_sequences
   FROM lingualoop_language_practice_reports AS r
@@ -82,14 +84,22 @@ const COMPLETED_TURNS_SQL = `
   ORDER BY sequence ASC
 `;
 const INSERT_REPORT_SQL = `
-  INSERT INTO lingualoop_language_practice_reports (session_id, content, generated_with_ai, parameter_coverage)
-  VALUES ($1::uuid, $2::jsonb, FALSE, $3::jsonb)
-  ON CONFLICT (session_id) DO NOTHING
+  INSERT INTO lingualoop_language_practice_reports (session_id, content, generated_with_ai, parameter_coverage, report_language)
+  VALUES ($1::uuid, $2::jsonb, FALSE, $3::jsonb, 'en')
+  ON CONFLICT (session_id) DO UPDATE SET
+    legacy_content = COALESCE(lingualoop_language_practice_reports.legacy_content, jsonb_build_object('content', lingualoop_language_practice_reports.content, 'parameterCoverage', lingualoop_language_practice_reports.parameter_coverage, 'generatedWithAi', lingualoop_language_practice_reports.generated_with_ai, 'createdAt', lingualoop_language_practice_reports.created_at)),
+    content = EXCLUDED.content, parameter_coverage = EXCLUDED.parameter_coverage,
+    generated_with_ai = EXCLUDED.generated_with_ai, report_language = 'en', created_at = clock_timestamp()
+  WHERE lingualoop_language_practice_reports.report_language = 'legacy'
 `;
 const INSERT_AI_REPORT_SQL = `
-  INSERT INTO lingualoop_language_practice_reports (session_id, content, generated_with_ai, parameter_coverage)
-  VALUES ($1::uuid, $2::jsonb, TRUE, $3::jsonb)
-  ON CONFLICT (session_id) DO NOTHING
+  INSERT INTO lingualoop_language_practice_reports (session_id, content, generated_with_ai, parameter_coverage, report_language)
+  VALUES ($1::uuid, $2::jsonb, TRUE, $3::jsonb, 'en')
+  ON CONFLICT (session_id) DO UPDATE SET
+    legacy_content = COALESCE(lingualoop_language_practice_reports.legacy_content, jsonb_build_object('content', lingualoop_language_practice_reports.content, 'parameterCoverage', lingualoop_language_practice_reports.parameter_coverage, 'generatedWithAi', lingualoop_language_practice_reports.generated_with_ai, 'createdAt', lingualoop_language_practice_reports.created_at)),
+    content = EXCLUDED.content, parameter_coverage = EXCLUDED.parameter_coverage,
+    generated_with_ai = EXCLUDED.generated_with_ai, report_language = 'en', created_at = clock_timestamp()
+  WHERE lingualoop_language_practice_reports.report_language = 'legacy'
 `;
 const CLAIM_REPORT_SQL = `
   INSERT INTO lingualoop_language_practice_report_claims (session_id, claim_token, lease_expires_at)
@@ -293,7 +303,7 @@ export class LanguagePracticeReportStore {
     uuid(sessionId);
     try {
       const result = rows(await this.executor.query(`
-        SELECT r.content, r.generated_with_ai, r.created_at, r.parameter_coverage, s.parameters_snapshot,
+        SELECT r.content, r.report_language, r.generated_with_ai, r.created_at, r.parameter_coverage, s.parameters_snapshot,
           ARRAY(SELECT t.sequence FROM lingualoop_language_practice_turns AS t
             WHERE t.session_id = s.id AND t.status = 'COMPLETED' AND btrim(t.transcript) <> '') AS student_sequences
         FROM lingualoop_language_practice_reports AS r
@@ -313,7 +323,7 @@ export class LanguagePracticeReportStore {
         const session = rows(await tx.query(LOCK_SESSION_SQL, [ownerId, sessionId]), 0, 1)[0];
         if (!session) return { admission: 'not_found' as const };
         const existing = rows(await tx.query(FIND_REPORT_SQL, [ownerId, sessionId]), 0, 1);
-        if (existing.length) return { value: { kind: 'existing' as const, report: report(existing[0], sessionId) } };
+        if (existing.length && object(existing[0]).report_language !== 'legacy') return { value: { kind: 'existing' as const, report: report(existing[0], sessionId) } };
 
         const sessionRow = object(session);
         if (sessionRow.status !== 'COMPLETED' && sessionRow.status !== 'EXPIRED' &&
@@ -345,7 +355,7 @@ export class LanguagePracticeReportStore {
         if (claimRow.claim_token !== token || typeof sessionRow.topic !== 'string' || typeof sessionRow.level !== 'string') {
           throw new LanguagePracticeReportStoreError();
         }
-        return { value: { kind: 'claimed' as const, token, turns, topic: practiceTopicLabel(sessionRow.topic, sessionRow.conversation_theme_snapshot), level: sessionRow.level, difficulty, parameters: parsePracticeParameters(sessionRow.parameters_snapshot ?? []) } };
+        return { value: { kind: 'claimed' as const, token, turns, topic: practiceTopicLabel(sessionRow.topic, sessionRow.conversation_theme_snapshot), level: sessionRow.level, difficulty, parameters: parsePracticeParameters(sessionRow.parameters_snapshot ?? []), activity: parseActivityConfiguration(sessionRow.activity_snapshot) } };
       });
       if ('admission' in result && result.admission) throw new LanguagePracticeReportAdmissionError(result.admission);
       if (!('value' in result)) throw new LanguagePracticeReportStoreError();

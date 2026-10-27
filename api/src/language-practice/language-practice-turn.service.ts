@@ -1,3 +1,4 @@
+import { parseActivityConfiguration, type ActivityConfiguration } from './activity-configuration';
 import type { CoachPromptInput } from './coach-prompt';
 import { practiceTopicLabel } from './practice-topic-labels';
 import { getSttDiagnostic } from './fastconformer-host';
@@ -7,7 +8,7 @@ import type { CoachResult } from './coach-result';
 import { getCoachDiagnostic, type CoachDiagnostic } from './coach-adapter';
 import type { LanguagePracticeLevel, LanguagePracticeTopic, PracticeDifficulty } from './language-practice-session-store';
 
-export const LANGUAGE_PRACTICE_MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024;
+export const LANGUAGE_PRACTICE_MAX_FILE_SIZE_BYTES = 32 * 1024 * 1024;
 export const LANGUAGE_PRACTICE_ACCEPTED_MIME_TYPES = [
   'audio/webm', 'audio/webm;codecs=opus', 'audio/ogg', 'audio/ogg;codecs=opus',
   'audio/wav', 'audio/x-wav', 'audio/mp4',
@@ -43,6 +44,7 @@ export interface OwnedPracticeContext {
   level: LanguagePracticeLevel;
   topic: LanguagePracticeTopic;
   conversationTheme?: string | null;
+  activity?: ActivityConfiguration;
   parameters?: import('./practice-catalogue').PracticeParameter[];
 }
 
@@ -141,6 +143,17 @@ export class LanguagePracticeTurnService {
 
       stage = 'stt';
       const transcript = await this.dependencies.speechToText.transcribeBounded(audio.buffer, audio.mimeType);
+      const activity = parseActivityConfiguration(context.activity);
+      if (activity.mode === 'single-response') {
+        stage = 'commit';
+        if (!await this.dependencies.turnStore.completeTurn(ownerId, sessionId, admitted.id, admitted.leaseToken, transcript,
+          'Response submitted for assessment.', '')) throw new Error();
+        completionCommitted = true;
+        stage = 'reread';
+        const persisted = await this.dependencies.turnStore.reserveTurn(ownerId, sessionId, clientTurnId);
+        if (!persisted.replay || persisted.turn.status !== 'COMPLETED' || persisted.turn.id !== admitted.id) throw new Error();
+        return { turn: persisted.turn, audioWav: null };
+      }
       stage = 'coach';
       const coaching = await this.dependencies.coach.respond({
         context: {
@@ -148,6 +161,7 @@ export class LanguagePracticeTurnService {
           topic: { code: context.topic, label: practiceTopicLabel(context.topic, context.conversationTheme) },
           source: 'practice-catalog',
         },
+        ...(context.activity === undefined ? {} : { activity }),
         level: context.level,
         difficulty: context.difficulty,
         transcript,

@@ -19,8 +19,8 @@ test('HTTP current-account and admin contracts use persisted authority and retur
   const store = new AccountStore({ async query(sql, values) {
     if (unavailable) throw Error('PRIVATE');
     if (sql.includes('INSERT')) {
-      if (rows.some(row => row.email === values[1])) return { rows: [] };
-      const row = { id: values[4], name: values[0], email: values[1], role: values[3], password_hash: values[2], created_at: new Date('2026-01-01') };
+      if (rows.some(row => row.email === values[0])) return { rows: [] };
+      const row = { id: values[2], name: null, email: values[0], role: values[1], created_at: new Date('2026-01-01') };
       rows.push(row); return { rows: [row] };
     }
     return { rows };
@@ -47,7 +47,7 @@ test('HTTP current-account and admin contracts use persisted authority and retur
     if (role !== 'admin') for (const method of ['GET', 'POST']) assert.equal((await request('/admin/accounts', method, method === 'POST' ? {} : undefined)).status, 403);
   }
   role = null; assert.equal((await request('/auth/me')).status, 403); role = 'admin';
-  const input = { name: 'Person', email: '  Person+Class@Example.Test ', password: ' exact password ', role: 'teacher' };
+  const input = { email: '  Person+Class@Example.Test ', role: 'teacher' };
   for (const invalid of [null, [], {}, { ...input, role: 'admin' }, { ...input, linked: true }, { ...input, name: ' ' }, { ...input, name: 'x'.repeat(121) }, { ...input, password: 'short' }, { ...input, password: 'x'.repeat(129) }, { ...input, email: 'é@example.test' }]) assert.equal((await request('/admin/accounts', 'POST', invalid)).status, 400);
   const created = await request('/admin/accounts', 'POST', input);
   assert.equal(created.status, 201);

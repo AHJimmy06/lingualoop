@@ -27,7 +27,7 @@ async function server(t) {
     calls.push({ sql, values });
     if (failure) throw new Error('PRIVATE provider data');
     if (sql.includes('INSERT INTO lingualoop_practices')) {
-      const row = { id: P, teacher_id: values[0], teacher_name: 'Teacher', title: values[1], conversation_theme: values[1], topic: values[2], level: values[3], duration_minutes: values[4], parameters: JSON.parse(values[5]), created_at: '2026-01-01', has_image: !!values[6] };
+      const row = { id: P, teacher_id: values[0], teacher_name: 'Teacher', title: values[1], conversation_theme: values[1], topic: values[2], level: values[3], duration_minutes: values[4], parameters: JSON.parse(values[5]), difficulty: values[7], activity: JSON.parse(values[8]), created_at: '2026-01-01', has_image: !!values[6] };
       rows.set(P, row); if (values[6]) images.set(P, { bytes: values[6], mime: 'image/jpeg' });
       return { rows: [row] };
     }
@@ -127,7 +127,7 @@ test('controller releases and zeroes memory upload buffers on success and invali
     const request = { headers: { 'content-type': 'multipart/form-data; boundary=test' }, file, verifiedIdentity: { ownerId: A, role: 'teacher' } };
     let inserts = 0;
     const controller = new PracticeCatalogueController({ async create(owner, metadata, image) {
-      inserts++; assert.equal(owner, A); assert.deepEqual(metadata, input);
+      inserts++; assert.equal(owner, A); assert.deepEqual(metadata, {...input, setup: {...input.setup, difficulty: 'medium'}});
       assert.equal((await sharp(image.bytes).metadata()).format, 'jpeg');
       assert.equal(Object.hasOwn(image, 'originalname'), false);
       return { hasImage: true };

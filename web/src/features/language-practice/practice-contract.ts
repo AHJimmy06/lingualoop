@@ -1,3 +1,4 @@
+import { parseActivityConfiguration } from './activity-configuration';
 import {
   hasExactKeys, isRecord, isUuid, isTimestamp, LanguagePracticeClientError,
   LANGUAGE_PRACTICE_LEVELS, LANGUAGE_PRACTICE_TOPICS, LANGUAGE_PRACTICE_DURATIONS, LANGUAGE_PRACTICE_DIFFICULTIES,
@@ -43,21 +44,24 @@ function isValidCreateSetup(value: unknown): boolean {
     LANGUAGE_PRACTICE_DURATIONS.includes(value.durationMinutes as PracticeSetup['durationMinutes']);
 }
 export function validateCreatePractice(value: unknown): asserts value is CreatePractice {
-  if (!isRecord(value) || !hasExactKeys(value, ['title', 'setup', 'parameters']) || !safeText(value.title, 120) || !isValidCreateSetup(value.setup) ||
+  try { parseActivityConfiguration(isRecord(value) ? value.activity : undefined); } catch { throw new LanguagePracticeClientError('invalid-input'); }
+  if (!isRecord(value) || !hasExactKeys(value, ['title', 'setup', 'parameters', ...(Object.hasOwn(value, 'activity') ? ['activity'] : [])]) || !safeText(value.title, 120) || !isValidCreateSetup(value.setup) ||
       !Array.isArray(value.parameters) || value.parameters.length < 1 || value.parameters.length > 20 ||
       !value.parameters.every(item => isRecord(item) && hasExactKeys(item, ['requirement']) && safeText(item.requirement, 500))) {
     throw new LanguagePracticeClientError('invalid-input');
   }
 }
 export function parsePractice(value: unknown): TeacherPractice {
-  if (!isRecord(value) || !hasExactKeys(value, ['id', 'teacherId', 'teacherName', 'title', 'setup', 'parameters', 'createdAt', 'hasImage']) || typeof value.hasImage !== 'boolean' ||
+  if (!isRecord(value) || !hasExactKeys(value, ['id', 'teacherId', 'teacherName', 'title', 'setup', 'parameters', 'createdAt', 'hasImage', ...(Object.hasOwn(value, 'activity') ? ['activity'] : [])]) || typeof value.hasImage !== 'boolean' ||
       !isUuid(value.id) || !isUuid(value.teacherId) || !safeText(value.teacherName, 120) || !isTimestamp(value.createdAt) || !safeText(value.title, 120) || !isValidResponseSetup(value.setup) ||
       !Array.isArray(value.parameters) || value.parameters.length < 1 || value.parameters.length > 20 ||
       !value.parameters.every(item => isRecord(item) && hasExactKeys(item, ['id', 'requirement']) && isUuid(item.id) && safeText(item.requirement, 500)) ||
       new Set(value.parameters.map(item => item.id)).size !== value.parameters.length) throw new LanguagePracticeClientError('invalid-response');
+  let activity;
+  try { activity = parseActivityConfiguration(value.activity); } catch { throw new LanguagePracticeClientError('invalid-response'); }
   const setup = value.setup as Record<string, unknown>;
   // Omitted historical difficulty is unknown; request defaults do not describe stored snapshots.
-  return { ...value, setup: { ...setup, difficulty: isPracticeDifficulty(setup.difficulty) ? setup.difficulty : null } as ParsedPracticeSetup } as TeacherPractice;
+  return { ...value, ...(value.activity === undefined ? {} : { activity }), setup: { ...setup, difficulty: isPracticeDifficulty(setup.difficulty) ? setup.difficulty : null } as ParsedPracticeSetup } as TeacherPractice;
 }
 export function parseCoverage(value: unknown): ParameterCoverage[] {
   if (!Array.isArray(value) || value.length > 20) throw new LanguagePracticeClientError('invalid-response');

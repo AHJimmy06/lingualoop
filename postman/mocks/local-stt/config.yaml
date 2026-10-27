@@ -1,0 +1,10 @@
+version: 1
+id: 8803811f-a1e4-4906-9a2e-4c8a49c78127
+name: local-stt
+slug: local-stt
+protocol: http
+port: 4500
+scenarios:
+  - name: default
+    path: ./default.js
+    default: true

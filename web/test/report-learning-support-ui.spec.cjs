@@ -44,24 +44,24 @@ test('English support renders suggested wording with audio and evidence-linked a
   assert.match(html, /You described an experience\./);
   assert.match(html, /Practise the past tense\./);
   assert.match(html, /English annotation/);
-  assert.match(html, />Turn<\/th><th[^>]*>Español<\/th>/);
+  assert.doesNotMatch(html, /Español/);
   assert.doesNotMatch(html, /title="Ver traducción al español: Observed strengths, 1"/);
-  assert.match(html, /title="Escuchar traducción al español: Observed strengths, 1"/);
+  assert.doesNotMatch(html, /Escuchar traducción/);
   assert.doesNotMatch(html, /title="Ver traducción al español: Next practice, 1"/);
-  assert.match(html, /title="Escuchar traducción al español: Next practice, 1"/);
+  assert.doesNotMatch(html, /Escuchar traducción/);
   assert.match(html, /class="flex items-start gap-2"/);
   assert.match(html, /href="#turn-1"/);
   assert.doesNotMatch(html, /Explain in Spanish/);
-  assert.match(html, /Traducción y explicación/);
+  assert.doesNotMatch(html, /Traducción y explicación/);
   assert.doesNotMatch(html, /Saved wording · Español|Prepare English version/);
 });
 
-test('legacy Spanish wording is explicitly labeled and cannot masquerade as an English suggestion', () => {
+test('read-only saved report does not expose Spanish translation controls', () => {
   const html = render({ onLoadSupport() {} });
   assert.doesNotMatch(html, /Prepare English version/);
-  assert.match(html, /Saved wording · Español/);
-  assert.match(html, /Saved explanation · Español/);
-  assert.match(html, /Saved notes · Español/);
+  assert.doesNotMatch(html, /Saved wording · Español/);
+  assert.doesNotMatch(html, /Saved explanation · Español/);
+  assert.doesNotMatch(html, /Saved notes · Español/);
   assert.match(html, /This saved report contains the original wording below/);
   assert.doesNotMatch(html, /Listen to suggestion/);
 });

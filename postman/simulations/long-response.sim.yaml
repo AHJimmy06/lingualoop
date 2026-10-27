@@ -1,0 +1,6 @@
+simulation: long-response
+routing: path
+mocks:
+  - name: local-stt
+    routeKey: stt
+    path: postman/mocks/local-stt

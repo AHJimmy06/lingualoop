@@ -4,7 +4,7 @@ import { RoleGuard, Roles } from '../auth/role.guard';
 import type { AuthenticatedIdentity } from '../auth/verified-request.guard';
 import { PracticeAudioBusyError, PracticeAudioService } from './practice-audio.service';
 
-const MAX_AUDIO_BYTES = 2 * 1024 * 1024;
+const MAX_AUDIO_BYTES = 32 * 1024 * 1024;
 const ALLOWED_AUDIO_TYPES = new Set([
   'audio/webm', 'audio/webm;codecs=opus', 'audio/ogg', 'audio/ogg;codecs=opus',
   'audio/wav', 'audio/x-wav', 'audio/mp4',

@@ -57,6 +57,7 @@ export class LanguagePracticeReportService {
     try {
       const content = await this.adapter.generate(admission.turns, {
         topic: admission.topic,
+        ...(admission.activity === undefined ? {} : { activity: admission.activity }),
         level: admission.level,
         difficulty: admission.difficulty,
         ...(admission.parameters?.length ? { parameters: admission.parameters } : {}),

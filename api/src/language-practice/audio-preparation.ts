@@ -7,12 +7,12 @@ import { isAbsolute, join } from 'node:path'
 import { getSttDiagnostic, SttDiagnosticError } from './fastconformer-host'
 import type { SttDiagnosticCode } from './fastconformer-host'
 
-const MAX_INPUT_BYTES = 2 * 1024 * 1024
+const MAX_INPUT_BYTES = 32 * 1024 * 1024
 const PROCESS_TIMEOUT_MS = 30_000
 const TERM_GRACE_MS = 250
 const KILL_GRACE_MS = 500
 const MAX_STDERR_BYTES = 8 * 1024
-const MAX_WAV_BYTES = 1024 * 1024
+const MAX_WAV_BYTES = 19_200_000 + 1024 * 1024
 const MIME_EXTENSIONS: Readonly<Record<string, string>> = {
   'audio/webm': '.webm',
   'audio/webm;codecs=opus': '.webm',
@@ -40,7 +40,7 @@ function signalTree(child: ChildProcess, signal: NodeJS.Signals): void {
 
 function runFFmpeg(command: string, inputPath: string, outputPath: string, spawnChild: SpawnChild, timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
-    const args = ['-nostdin', '-y', '-i', inputPath, '-t', '20', '-c:a', 'pcm_s16le', '-ac', '1', '-ar', '16000', '-f', 'wav', outputPath]
+    const args = ['-nostdin', '-y', '-i', inputPath, '-t', '601', '-c:a', 'pcm_s16le', '-ac', '1', '-ar', '16000', '-f', 'wav', outputPath]
     let child: ChildProcess
     try {
       child = spawnChild(command, args, {
@@ -137,7 +137,7 @@ async function validateWav(path: string): Promise<void> {
             wav.readUInt16LE(start + 12) !== 2 || wav.readUInt16LE(start + 14) !== 16) throw new Error('invalid')
         hasFormat = true
       } else if (id === 'data') {
-        if (!hasFormat || hasData || size === 0 || size > 640_000 || size % 2 !== 0) throw new Error('invalid')
+        if (!hasFormat || hasData || size === 0 || size > 19_200_000 || size % 2 !== 0) throw new Error('invalid')
         hasData = true
       }
       offset = next

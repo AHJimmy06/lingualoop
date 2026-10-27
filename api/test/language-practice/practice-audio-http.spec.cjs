@@ -37,9 +37,9 @@ async function createServer(t, { prepare } = {}) {
       { provide: PRACTICE_RUNTIME, useValue: { getHost: () => host } },
       { provide: LinguaLoopTokenService, useValue: { async verifyBearerToken(value) {
         if (value !== token) throw new InvalidBearerTokenError();
-        return { issuer: 'google', subject: 'verified-subject', sessionId };
+        return { issuer: 'local', subject: ownerId, sessionId };
       } } },
-      { provide: LINGUALOOP_IDENTITY_STORE, useValue: { async findOwnerByIdentity() { return ownerId; }, async findApprovalByOwner() { return { email: 'student@example.test', role: 'student' }; } } },
+      { provide: LINGUALOOP_IDENTITY_STORE, useValue: { async findOwnerByIdentity() { return ownerId; }, async findAccountByOwner() { return { name: 'Student', email: 'student@example.test', role: 'student' }; } } },
       { provide: LINGUALOOP_SESSION_STORE, useValue: { async isSessionActive(owner, session) { return owner === ownerId && session === sessionId; } } },
       ConfiguredVerifiedRequestGuard,
       require('../../dist/auth/role.guard.js').RoleGuard,
@@ -110,16 +110,16 @@ test('rejects unsupported MIME and declared oversized body before preparation', 
   const { base, calls } = await createServer(t);
   const mime = await fetch(`${base}/practice/transcribe`, { method: 'POST', headers: headers({ 'content-type': 'multipart/form-data; boundary=x' }), body: 'payload' });
   assert.equal(mime.status, 415);
-  const oversized = await rawRequest(base, { headers: headers({ 'content-length': String(2 * 1024 * 1024 + 1) }) });
+  const oversized = await rawRequest(base, { headers: headers({ 'content-length': String(32 * 1024 * 1024 + 1) }) });
   assert.equal(oversized.status, 413);
   assert.equal(calls.prepare, 0);
 });
 
-test('rejects streamed body over 2 MiB without invoking preparation', async (t) => {
+test('rejects streamed body over 32 MiB without invoking preparation', async (t) => {
   const { base, calls } = await createServer(t);
   const response = await rawRequest(base, {
     headers: headers({ 'transfer-encoding': 'chunked' }),
-    chunks: [Buffer.alloc(1024 * 1024), Buffer.alloc(1024 * 1024), Buffer.alloc(1)],
+    chunks: [Buffer.alloc(16 * 1024 * 1024), Buffer.alloc(16 * 1024 * 1024), Buffer.alloc(1)],
   });
   assert.equal(response.status, 413);
   assert.equal(calls.prepare, 0);

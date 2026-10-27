@@ -1,3 +1,4 @@
+import { parseActivityConfiguration, type ActivityConfiguration } from './activity-configuration';
 import type { QueryExecutor, QueryResult } from '../auth/identity-store';
 import { parsePracticeParameters, type PracticeParameter } from './practice-catalogue';
 import { parseConversationTheme } from './practice-topic-labels';
@@ -41,6 +42,9 @@ export interface LanguagePracticeSetup {
 }
 
 export interface LanguagePracticeSession {
+  activity?: ActivityConfiguration;
+  conversationTheme?: string | null;
+  parameters?: PracticeParameter[];
   difficulty: PracticeDifficulty | null;
   id: string;
   status: 'ACTIVE' | 'EXPIRED' | 'COMPLETED';
@@ -78,7 +82,7 @@ const CREATE_SESSION_SQL = `
     duration_minutes * 60000 AS "remainingMs"
 `;
 const FIND_SESSION_SQL = `
-  SELECT id,
+  SELECT id, activity_snapshot AS activity, conversation_theme_snapshot AS "conversationTheme", parameters_snapshot AS parameters,
     CASE WHEN status = 'COMPLETED' THEN status
       WHEN expires_at <= NOW() THEN 'EXPIRED' ELSE status END AS status,
     level, topic, difficulty,
@@ -134,6 +138,9 @@ function session(value: unknown): LanguagePracticeSession {
   }
   return {
     id: row.id,
+    ...(row.conversationTheme === undefined ? {} : { conversationTheme: parseConversationTheme(row.conversationTheme) }),
+    ...(row.parameters === undefined ? {} : { parameters: parsePracticeParameters(row.parameters) }),
+    ...(row.activity === undefined ? {} : { activity: parseActivityConfiguration(row.activity) }),
     difficulty: parsePracticeDifficulty(row.difficulty),
     status: row.status,
     level: row.level as LanguagePracticeLevel,
@@ -220,63 +227,98 @@ export class LanguagePracticeSessionStore {
     try {
       const result = rows(await this.executor.query(`
         INSERT INTO lingualoop_language_practice_sessions
-          (owner_id, level, topic, duration_minutes, started_at, expires_at, practice_id, parameters_snapshot, conversation_theme_snapshot, difficulty)
-        SELECT $1::uuid, level, topic, duration_minutes, NOW(), NOW() + duration_minutes * INTERVAL '1 minute', id, parameters, conversation_theme, difficulty
+          (owner_id, level, topic, duration_minutes, started_at, expires_at, practice_id, parameters_snapshot, conversation_theme_snapshot, difficulty, activity_snapshot)
+        SELECT $1::uuid, level, topic, duration_minutes, NOW(), NOW() + CASE WHEN activity->>'mode' = 'single-response' THEN INTERVAL '24 hours' ELSE duration_minutes * INTERVAL '1 minute' END, id, parameters, conversation_theme, difficulty, activity
         FROM lingualoop_practices WHERE id = $2::uuid
-        RETURNING id, status, level, topic, difficulty, duration_minutes AS "durationMinutes",
-          started_at AS "startedAt", expires_at AS "expiresAt", duration_minutes * 60000 AS "remainingMs"
+        RETURNING id, status, level, topic, difficulty, conversation_theme_snapshot AS "conversationTheme", parameters_snapshot AS parameters, activity_snapshot AS activity, duration_minutes AS "durationMinutes",
+          started_at AS "startedAt", expires_at AS "expiresAt", CASE WHEN activity_snapshot->>'mode' = 'single-response' THEN 86400000 ELSE duration_minutes * 60000 END AS "remainingMs"
       `, [ownerId, practiceId]), 0, 1);
       return result.length ? session(result[0]) : null;
     } catch { throw new LanguagePracticeSessionStoreError(); }
   }
 
   /** Owned durable snapshot, including nullable difficulty. No catalogue lookup. */
-  async getOwnedSnapshot(ownerId: string, sessionId: string): Promise<{ level: LanguagePracticeLevel; topic: LanguagePracticeTopic; difficulty: PracticeDifficulty | null; conversationTheme: string | null; parameters: PracticeParameter[] } | null> {
+  async getOwnedSnapshot(ownerId: string, sessionId: string): Promise<{ level: LanguagePracticeLevel; topic: LanguagePracticeTopic; difficulty: PracticeDifficulty | null; conversationTheme: string | null; parameters: PracticeParameter[]; activity?: ActivityConfiguration } | null> {
     uuid(ownerId);
     uuid(sessionId);
     try {
-      const result = rows(await this.executor.query(`SELECT level, topic, difficulty, parameters_snapshot, conversation_theme_snapshot FROM lingualoop_language_practice_sessions WHERE owner_id = $1::uuid AND id = $2::uuid AND status = 'ACTIVE' AND expires_at > clock_timestamp()`, [ownerId, sessionId]), 0, 1);
+      const result = rows(await this.executor.query(`SELECT level, topic, difficulty, parameters_snapshot, conversation_theme_snapshot, activity_snapshot FROM lingualoop_language_practice_sessions WHERE owner_id = $1::uuid AND id = $2::uuid AND status = 'ACTIVE' AND expires_at > clock_timestamp() - INTERVAL '12 minutes'`, [ownerId, sessionId]), 0, 1);
       if (!result.length) return null;
       const row = result[0] as Record<string, unknown>;
       if (!(LANGUAGE_PRACTICE_LEVELS as readonly unknown[]).includes(row.level) || !(LANGUAGE_PRACTICE_TOPICS as readonly unknown[]).includes(row.topic)) throw new TypeError();
-      return { level: row.level as LanguagePracticeLevel, topic: row.topic as LanguagePracticeTopic, difficulty: parsePracticeDifficulty(row.difficulty), conversationTheme: parseConversationTheme(row.conversation_theme_snapshot), parameters: parsePracticeParameters(row.parameters_snapshot) };
+      return { level: row.level as LanguagePracticeLevel, topic: row.topic as LanguagePracticeTopic, difficulty: parsePracticeDifficulty(row.difficulty), conversationTheme: parseConversationTheme(row.conversation_theme_snapshot), parameters: parsePracticeParameters(row.parameters_snapshot), ...(row.activity_snapshot === undefined ? {} : { activity: parseActivityConfiguration(row.activity_snapshot) }) };
     } catch { throw new LanguagePracticeSessionStoreError(); }
   }
 
-  async finishSession(ownerId: string, sessionId: string): Promise<{ id: string; status: 'COMPLETED' | 'EXPIRED' } | null> {
+  async finishSession(ownerId: string, sessionId: string): Promise<{ id: string; status: 'COMPLETED' | 'EXPIRED' | 'DISCARDED' } | null> {
     uuid(ownerId);
     uuid(sessionId);
     try {
-      const updated = rows(await this.executor.query(FINISH_SESSION_SQL, [ownerId, sessionId]), 0, 1);
-      if (updated.length) {
-        const row = updated[0] as Record<string, unknown>;
-        uuid(row.id);
-        if (row.status !== 'COMPLETED') throw new LanguagePracticeSessionStoreError();
-        return { id: row.id, status: 'COMPLETED' };
-      }
+      if (!this.executor.withTransaction) throw new LanguagePracticeSessionStoreError();
+      return await this.executor.withTransaction(async tx => {
+        // Share the row lock used by turn reservation/completion. Subsequent statements
+        // see committed turns after any competing writer releases the lock.
+        const locked = rows(await tx.query(`SELECT id FROM lingualoop_language_practice_sessions
+          WHERE owner_id = $1 AND id = $2 FOR UPDATE`, [ownerId, sessionId]), 0, 1);
+        if (!locked.length) return null;
+        const discarded = rows(await tx.query(`DELETE FROM lingualoop_language_practice_sessions AS s
+          WHERE s.owner_id = $1 AND s.id = $2 AND s.status <> 'COMPLETED'
+            AND s.active_turn_lease_token IS NULL
+            AND NOT EXISTS (SELECT 1 FROM lingualoop_language_practice_turns t
+              WHERE t.session_id = s.id AND t.status = 'COMPLETED')
+          RETURNING s.id`, [ownerId, sessionId]), 0, 1);
+        if (discarded.length) {
+          const row = discarded[0] as Record<string, unknown>;
+          uuid(row.id);
+          return { id: row.id, status: 'DISCARDED' as const };
+        }
+        const updated = rows(await tx.query(FINISH_SESSION_SQL, [ownerId, sessionId]), 0, 1);
+        if (updated.length) {
+          const row = updated[0] as Record<string, unknown>;
+          uuid(row.id);
+          if (row.status !== 'COMPLETED') throw new LanguagePracticeSessionStoreError();
+          return { id: row.id, status: 'COMPLETED' as const };
+        }
 
-      // The conditional UPDATE serializes with turn reservation on the same session row.
-      // Re-read after a skipped update to classify a concurrent close or a live lease.
-      const stateRows = rows(await this.executor.query(FIND_FINISH_STATE_SQL, [ownerId, sessionId]), 0, 1);
-      if (!stateRows.length) return null;
-      const state = stateRows[0] as Record<string, unknown>;
-      uuid(state.id);
-      if (state.status !== 'ACTIVE' && state.status !== 'EXPIRED' && state.status !== 'COMPLETED') {
+        // The conditional UPDATE serializes with turn reservation on the same session row.
+        // Re-read after a skipped update to classify a concurrent close or a live lease.
+        const stateRows = rows(await tx.query(FIND_FINISH_STATE_SQL, [ownerId, sessionId]), 0, 1);
+        if (!stateRows.length) return null;
+        const state = stateRows[0] as Record<string, unknown>;
+        uuid(state.id);
+        if (state.status !== 'ACTIVE' && state.status !== 'EXPIRED' && state.status !== 'COMPLETED') {
+          throw new LanguagePracticeSessionStoreError();
+        }
+        if (state.activeTurnLeaseToken !== null && state.activeTurnLeaseToken !== undefined) {
+          uuid(state.activeTurnLeaseToken);
+          if (state.status === 'ACTIVE') throw new LanguagePracticeSessionFinishError('turn_in_progress');
+        }
+        if (state.status === 'COMPLETED' || state.status === 'EXPIRED' ||
+            (state.status === 'ACTIVE' && state.elapsed === true)) {
+          return { id: state.id, status: state.status === 'COMPLETED' ? 'COMPLETED' as const : 'EXPIRED' as const };
+        }
         throw new LanguagePracticeSessionStoreError();
-      }
-      if (state.activeTurnLeaseToken !== null && state.activeTurnLeaseToken !== undefined) {
-        uuid(state.activeTurnLeaseToken);
-        if (state.status === 'ACTIVE') throw new LanguagePracticeSessionFinishError('turn_in_progress');
-      }
-      if (state.status === 'COMPLETED' || state.status === 'EXPIRED' ||
-          (state.status === 'ACTIVE' && state.elapsed === true)) {
-        return { id: state.id, status: state.status === 'COMPLETED' ? 'COMPLETED' : 'EXPIRED' };
-      }
-      throw new LanguagePracticeSessionStoreError();
+      });
     } catch (error) {
       if (error instanceof LanguagePracticeSessionFinishError) throw error;
       throw new LanguagePracticeSessionStoreError();
     }
+  }
+
+  /** Resolve the persisted session link; never trust a caller-provided practice id. */
+  async getSessionImage(ownerId: string, sessionId: string): Promise<{ bytes: Buffer; mime: 'image/jpeg' } | null> {
+    uuid(ownerId); uuid(sessionId);
+    try {
+      const result = rows(await this.executor.query(`
+        SELECT i.bytes, i.mime FROM lingualoop_language_practice_sessions AS s
+        LEFT JOIN lingualoop_practice_images AS i ON i.practice_id = s.practice_id
+        WHERE s.owner_id = $1::uuid AND s.id = $2::uuid
+      `, [ownerId, sessionId]), 1, 1);
+      const row = result[0] as { bytes: unknown; mime: unknown };
+      if (row.bytes === null && row.mime === null) return null;
+      if (!Buffer.isBuffer(row.bytes) || !row.bytes.length || row.bytes.length > 2 * 1024 * 1024 || row.mime !== 'image/jpeg') throw new Error();
+      return { bytes: row.bytes, mime: 'image/jpeg' };
+    } catch { throw new LanguagePracticeSessionStoreError(); }
   }
 
   async getSession(ownerId: string, sessionId: string): Promise<LanguagePracticeSession | null> {

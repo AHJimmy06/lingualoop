@@ -15,7 +15,7 @@ test('teacher form has one concrete theme, independent fixed CEFR/time/difficult
   const html = renderToStaticMarkup(React.createElement(MemoryRouter, null, React.createElement(TeacherPracticesView)));
   assert.match(html, /Conversation theme/);
   assert.doesNotMatch(html, />Topic<|>Title<|value="travel"|value="work"/);
-  assert.equal((html.match(/<select/g) || []).length, 3);
+  assert.equal((html.match(/<select/g) || []).length, 4);
   assert.match(html, /CEFR target level/); assert.match(html, /Duration/);
   assert.match(html, /Task difficulty/);
   assert.match(html, /value="medium" selected=""/);
@@ -57,21 +57,28 @@ test('teacher draft difficulty changes independently and creation forwards the f
   function nodes(tree) { return !tree || typeof tree !== 'object' ? [] : [tree, ...React.Children.toArray(tree.props?.children).flatMap(nodes)]; }
   try {
     let tree = render();
-    const selects = nodes(tree).filter(node => node.type === 'select');
+    const selects = nodes(tree).filter(node => node.type === 'select' && node.props.value !== 'conversation' && node.props.value !== 'single-response');
     assert.equal(selects[2].props.value, 'medium');
     selects[0].props.onChange({ target: { value: 'B2' } });
     tree = render();
-    nodes(tree).filter(node => node.type === 'select')[2].props.onChange({ target: { value: 'hard' } });
+    nodes(tree).filter(node => node.type === 'select' && node.props.value !== 'conversation' && node.props.value !== 'single-response')[2].props.onChange({ target: { value: 'hard' } });
     tree = render();
-    const updated = nodes(tree).filter(node => node.type === 'select');
+    const updated = nodes(tree).filter(node => node.type === 'select' && node.props.value !== 'conversation' && node.props.value !== 'single-response');
     assert.deepEqual(updated.map(node => node.props.value), ['B2', 5, 'hard']);
     nodes(tree).find(node => node.type === 'input' && node.props.maxLength === 120).props.onChange({ target: { value: 'Travel plans' } });
-    nodes(tree).find(node => node.type === 'textarea').props.onChange({ target: { value: 'Ask directions' } });
+    nodes(tree).find(node => node.type === 'textarea' && node.props.maxLength === 500 && !node.props.placeholder).props.onChange({ target: { value: 'Ask directions' } });
     tree = render();
     const preview = nodes(tree).find(node => node.type.name === 'PracticeCardPreview');
     assert.deepEqual(preview.props.setup, { level: 'B2', durationMinutes: 5, difficulty: 'hard' });
+    nodes(tree).find(node => node.type === 'select' && node.props.value === 'conversation').props.onChange({ target: { value: 'single-response' } });
+    tree = render();
+    nodes(tree).find(node => node.type === 'textarea' && node.props.placeholder?.startsWith('A friend')).props.onChange({ target: { value: 'A friend on the walk' } });
+    tree = render();
+    nodes(tree).find(node => node.type === 'textarea' && node.props.maxLength === 1000).props.onChange({ target: { value: 'A wooded park' } });
+    tree = render();
     await nodes(tree).find(node => node.type === 'form').props.onSubmit({ preventDefault() {} });
     assert.deepEqual(submitted.setup, { level: 'B2', durationMinutes: 5, difficulty: 'hard' });
+    assert.deepEqual(submitted.activity, { mode: 'single-response', aiRole: 'A friend on the walk', location: 'A wooded park' });
   } finally {
     Object.assign(React, original);
     LanguagePracticeClient.prototype.createPractice = originalCreate;

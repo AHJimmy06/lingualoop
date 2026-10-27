@@ -16,9 +16,9 @@ const oldChecksums = [
   'b99bfcfcdad797fa035285d7489941d5e566e6dfadcee2603d27b15676cd5908',
   '68e1d037ef76bd36ca9807a6a0f12eab4c7b322e261144ff80753ee4c270815e',
 ];
-test('runner accepts additive 014 identity inventory; 001–012 checksums unchanged', async () => {
+test('runner accepts additive 017 activity inventory; 001–012 checksums unchanged', async () => {
   const migrations = await loadMigrations(path.join(__dirname, '../../db/migrations'));
-  assert.equal(migrations.length, 14);
+  assert.equal(migrations.length, 17);
   assert.deepEqual(migrations.slice(0, 12).map(item => item.checksum), oldChecksums);
   assert.equal(migrations[11].name, '012_custom_practice_theme_image.sql');
   assert.equal(migrations[12].name, '013_practice_difficulty.sql');

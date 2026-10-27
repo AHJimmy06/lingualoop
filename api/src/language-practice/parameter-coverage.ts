@@ -8,7 +8,7 @@ export interface ParameterCoverage {
   explanation: string;
 }
 export function unassessedCoverage(parameters: readonly PracticeParameter[]): ParameterCoverage[] {
-  return parameters.map(({ id, requirement }) => ({ parameterId: id, requirement, status: 'unassessed', evidenceSequences: [], explanation: 'No hay evidencia evaluada para este requisito.' }));
+  return parameters.map(({ id, requirement }) => ({ parameterId: id, requirement, status: 'unassessed', evidenceSequences: [], explanation: 'There is no assessed evidence for this requirement.' }));
 }
 /** Validate identity, order and student-only linkage, never infer semantic matches from keywords. */
 export function validateParameterCoverage(value: unknown, parameters: readonly PracticeParameter[], studentSequences?: ReadonlySet<number>): ParameterCoverage[] {

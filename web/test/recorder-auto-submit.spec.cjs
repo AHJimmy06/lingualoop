@@ -9,7 +9,7 @@ for (const ext of ['.ts', '.tsx']) require.extensions[ext] = (module, filename) 
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
 }).outputText, filename);
 
-test('silence sends the current recording once; a later turn requires another explicit start', async t => {
+test('manual stop sends one long recording; silence never submits and a later turn requires explicit start', async t => {
   const savedLoad = Module._load;
   const savedGlobals = Object.fromEntries(['navigator', 'window', 'MediaRecorder', 'performance', 'setInterval', 'clearInterval'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   let index = 0, time = 0, microphones = 0;
@@ -77,7 +77,7 @@ test('silence sends the current recording once; a later turn requires another ex
 
   button().props.onClick(); await flush(); render();
   assert.equal(microphones, 1);
-  time = 2500; monitors[0].callback(); render();
+  time = 65000; assert.equal(monitors.length, 0, 'no silence monitor installed'); button().props.onClick(); render();
   assert.equal(recordings.length, 0, 'do not submit before the final audio chunk');
   assert.equal(trackStops, 0, 'do not release tracks before recorder finalization');
   assert.equal(button().props.disabled, true, 'cannot start a new capture while finalizing');
@@ -91,19 +91,19 @@ test('silence sends the current recording once; a later turn requires another ex
   assert.equal(trackStops, 1);
   assert.equal(recordings.length, 1);
   assert.ok(recordings[0] instanceof Blob);
-  monitors[0].callback(); await flush();
+  await flush();
   assert.equal(recordings.length, 1, 'late or duplicate silence cannot resend');
   assert.equal(microphones, 1, 'next turn does not start automatically');
   assert.equal(button().props['aria-label'], 'Start recording');
   button().props.onClick(); await flush(); render();
   assert.equal(microphones, 2, 'user can explicitly start another turn');
-  monitors[0].callback(); assert.equal(recordings.length, 1, 'old monitor cannot stop a new turn');
-  time = 5000; button().props.onClick();
+  assert.equal(monitors.length, 0, 'silence cannot stop any turn');
+  time = 70000; button().props.onClick();
   finalEvents.splice(0).forEach(deliver => deliver());
   assert.equal(recordings.length, 2, 'manual stop still submits');
   render();
   button().props.onClick(); await flush(); render();
-  time = 7500; monitors.at(-1).callback(); render();
+  time = 75000; button().props.onClick(); render();
   props.disabled = true; render();
   finalEvents.splice(0).forEach(deliver => deliver());
   assert.equal(recordings.length, 2, 'cancelling while finalizing must not send a late recording');

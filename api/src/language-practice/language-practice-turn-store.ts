@@ -49,7 +49,7 @@ const FAIL_SQL = `
 `;
 const COMPLETED_TURNS_SQL = `
   WITH recent_completed AS (
-    SELECT t.sequence, LEFT(t.transcript, 2000) AS transcript,
+    SELECT t.sequence, LEFT(t.transcript, 30000) AS transcript,
       LEFT(t.assistant_response, 2000) AS assistant_response, t.completed_at
     FROM lingualoop_language_practice_turns AS t
     INNER JOIN lingualoop_language_practice_sessions AS s ON s.id = t.session_id
@@ -222,7 +222,7 @@ export class LanguagePracticeTurnStore {
         if (completedAt === null) throw new LanguagePracticeTurnStoreError();
         return {
           sequence: row.sequence as number,
-          transcript: boundedHistoryText(row.transcript),
+          transcript: row.transcript.slice(0, 30000),
           assistantResponse: boundedHistoryText(row.assistant_response),
           completedAt,
         };

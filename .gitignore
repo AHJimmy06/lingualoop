@@ -13,3 +13,6 @@ coverage/
 lingualoop.zip
 # Machine-local Python installation and download cache
 /api/Python/
+
+# Machine-local Python runtime (never ship or version binaries)
+/Python/

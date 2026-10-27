@@ -132,7 +132,7 @@ test('completion and failure bind owner, session, turn, and exact lease token', 
 
 test('completion evidence is bounded to the original 2000-character limit', async () => {
   const fake = fakeQuery({ rows: [{ completed: true }] });
-  const evidence = 'x'.repeat(2_005);
+  const evidence = 'x'.repeat(30_005);
   assert.equal(await fake.store.completeTurn(OWNER, SESSION, TURN, LEASE, 'words', 'reply', evidence), true);
   assert.equal(fake.calls[0].parameters[6].length, 2_000);
   assert.equal(fake.calls[0].parameters[6], evidence.slice(0, 2_000));
@@ -193,7 +193,7 @@ test('completed turn listing binds owner and session and rejects malformed ident
   assert.match(fake.calls[0].sql, /s\.owner_id = \$1::uuid AND s\.id = \$2::uuid AND t\.status = 'COMPLETED'/i);
   assert.match(fake.calls[0].sql, /ORDER BY t\.sequence DESC\s+LIMIT 256/i);
   assert.match(fake.calls[0].sql, /ORDER BY sequence ASC/i);
-  assert.match(fake.calls[0].sql, /LEFT\(t\.transcript, 2000\)/i);
+  assert.match(fake.calls[0].sql, /LEFT\(t\.transcript, 30000\)/i);
   assert.match(fake.calls[0].sql, /LEFT\(t\.assistant_response, 2000\)/i);
   await assert.rejects(fake.store.listCompletedTurns('bad-owner', SESSION), LanguagePracticeTurnStoreError);
   const malformedTimestamp = fakeQuery({ rows: [{ sequence: 1, transcript: 'hello', assistant_response: 'Welcome.', completed_at: 'invalid' }] });
@@ -227,7 +227,7 @@ test('disposable PostgreSQL history is owner-filtered, completed-only, chronolog
     await client.connect();
 
     await client.query(
-      "INSERT INTO lingualoop_accounts (id, issuer, subject) VALUES ($1, 'google', 'history-owner'), ($2, 'google', 'history-foreign-owner')",
+      "INSERT INTO lingualoop_accounts (id, issuer, subject, email, name, role) VALUES ($1::uuid, 'local', $1::uuid::text, $1::uuid::text || '@example.test', 'Test', 'student'), ($2::uuid, 'local', $2::uuid::text, $2::uuid::text || '@example.test', 'Test', 'student')",
       [OWNER, FOREIGN_OWNER],
     );
     await client.query(
@@ -248,7 +248,7 @@ test('disposable PostgreSQL history is owner-filtered, completed-only, chronolog
           SESSION,
           `323e4567-e89b-42d3-a456-${String(sequence).padStart(12, '0')}`,
           sequence,
-          sequence === 260 ? 'x'.repeat(2_005) : `learner-${sequence}`,
+          sequence === 260 ? 'x'.repeat(30_005) : `learner-${sequence}`,
           sequence === 260 ? 'y'.repeat(2_005) : `assistant-${sequence}`,
         ],
       );
@@ -272,7 +272,7 @@ test('disposable PostgreSQL history is owner-filtered, completed-only, chronolog
     assert.equal(listed.length, 256);
     assert.equal(listed[0].sequence, 5);
     assert.equal(listed.at(-1).sequence, 260);
-    assert.equal(listed.at(-1).transcript.length, 2_000);
+    assert.equal(listed.at(-1).transcript.length, 30_000);
     assert.equal(listed.at(-1).assistantResponse.length, 2_000);
     assert.match(listed[0].completedAt, /^\d{4}-\d\d-/);
     assert.deepEqual(await store.listCompletedTurns(FOREIGN_OWNER, SESSION), []);

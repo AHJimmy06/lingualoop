@@ -62,12 +62,12 @@ test('report store is owner-scoped, deterministic, immutable, and closes stale l
       password: PASSWORD, connectionTimeoutMillis: 1_000,
     };
     client = await waitForPostgres(config);
-    assert.equal(await runLinguaLoopMigrations(client, MIGRATIONS_DIR), 10);
+    assert.equal(await runLinguaLoopMigrations(client, MIGRATIONS_DIR), 17);
     await client.end();
     client = new Client(config);
     await client.connect();
     for (const [id, subject] of [[OWNER, 'report-owner'], [OTHER_OWNER, 'other-owner']]) {
-      await client.query("INSERT INTO lingualoop_accounts (id, issuer, subject) VALUES ($1, 'google', $2)", [id, subject]);
+      await client.query("INSERT INTO lingualoop_accounts (id, issuer, subject, email, name, role) VALUES ($1::uuid, 'local', $1::uuid::text, $1::uuid::text || '@example.test', $2, 'student')", [id, subject]);
     }
     await client.query(
       "INSERT INTO lingualoop_language_practice_sessions (id, owner_id, level, topic, duration_minutes, status, expires_at) " +
@@ -137,7 +137,7 @@ test('report store is owner-scoped, deterministic, immutable, and closes stale l
     assert.equal(beginnings.filter((value) => value.kind === 'busy').length, 1);
     const claimed = beginnings.find((value) => value.kind === 'claimed');
     assert.equal(claimed.turns.length, 1);
-    assert.equal(claimed.topic, 'travel');
+    assert.equal(claimed.topic, 'Travel');
     assert.equal(claimed.level, 'B1');
     await assert.rejects(store.beginAiReport(OTHER_OWNER, claimSession), (error) =>
       error instanceof LanguagePracticeReportAdmissionError && error.reason === 'not_found');
@@ -214,7 +214,7 @@ test('report store is owner-scoped, deterministic, immutable, and closes stale l
     );
     const empty = await store.getOrCreate(OWNER, noTurnsSession);
     assert.deepEqual(empty.corrections, []);
-    assert.match(empty.summary, /sin turnos completados/);
+    assert.match(empty.summary, /without completed responses/);
 
     const stale = await store.getOrCreate(OWNER, LEASE_SESSION);
     assert.equal(stale.generatedWithAi, false);

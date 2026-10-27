@@ -51,13 +51,13 @@ test('migration 010 adds report claims without changing existing report behavior
       user: 'postgres', password: DISPOSABLE_PASSWORD, connectionTimeoutMillis: 1_000,
     };
     client = await waitForPostgres(config);
-    assert.equal(await runLinguaLoopMigrations(client, MIGRATIONS_DIR), 10);
+    assert.equal(await runLinguaLoopMigrations(client, MIGRATIONS_DIR), 17);
     await client.end();
     client = new Client(config);
     await client.connect();
 
     await client.query(
-      "INSERT INTO lingualoop_accounts (id, issuer, subject) VALUES ($1, 'google', 'report-owner')",
+      "INSERT INTO lingualoop_accounts (id, issuer, subject, email, name, role) VALUES ($1::uuid, 'local', $1::uuid::text, $1::uuid::text || '@example.test', 'Test', 'student')",
       [OWNER],
     );
     await client.query(

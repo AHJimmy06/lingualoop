@@ -25,7 +25,7 @@ const MAX_ORIGINAL_LENGTH = 500;
 const MAX_CORRECTED_PHRASE_LENGTH = 300;
 const MAX_EXPLANATION_LENGTH = 280;
 
-/** Builds a deterministic Spanish report from completed, owner-scoped turn projections. */
+/** Builds a deterministic English report from completed, owner-scoped turn projections. */
 export function buildLanguagePracticeReportFallback(
   completedOwnedTurns: readonly CompletedOwnedTurnProjection[],
 ): LanguagePracticeReportFallback {
@@ -40,26 +40,26 @@ export function buildLanguagePracticeReportFallback(
   if (turns.length === 0) {
     return {
       summary:
-        'La sesión finalizó sin turnos completados, por lo que todavía no hay evidencia suficiente para evaluar el desempeño.',
+        'The session ended without completed responses. There is not enough evidence to assess performance.',
       corrections: [],
       strengths: [],
       recommendations: [
-        'Realice una nueva práctica y complete al menos una intervención para obtener observaciones pedagógicas específicas.',
+        'Start a new practice and complete at least one response to receive evidence-based feedback.',
       ],
     };
   }
 
-  const summary = `Se completaron ${turns.length} ${turns.length === 1 ? 'intervención' : 'intervenciones'} en inglés. El informe conserva ${corrections.length} ${corrections.length === 1 ? 'corrección concreta respaldada' : 'correcciones concretas respaldadas'} por la sesión.`;
+  const summary = `Completed responses: ${turns.length}. Evidence-linked corrections: ${corrections.length}.`;
   return {
     summary: summary.slice(0, MAX_SUMMARY_LENGTH),
     corrections,
     strengths: [],
     recommendations: corrections.length
       ? [
-          'Practique nuevamente las frases corregidas y úselas en ejemplos propios antes de la próxima sesión.',
+          'Practise the corrected phrases using your own examples before your next session.',
         ]
       : [
-          'Realice otra sesión sobre el mismo tema y desarrolle sus ideas con ejemplos para ampliar la evidencia.',
+          'Try another session on this topic and develop your ideas with examples.',
         ],
   };
 }

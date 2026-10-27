@@ -198,7 +198,7 @@ test('malformed present Google settings keep health routes live and disable auth
 
   class HealthOnlyTestModule {}
   Module({
-    controllers: appControllers,
+    controllers: [HealthController],
     providers: [{ provide: LINGUALOOP_QUERY_EXECUTOR, useValue: { async query() { return { rows: [{ '?column?': 1 }] }; } } }],
   })(HealthOnlyTestModule);
   const app = await NestFactory.create(HealthOnlyTestModule, { logger: false });
@@ -483,7 +483,8 @@ test('start and callback have bounded per-client request rates; rate-limited cal
 
   for (let i = 0; i < 30; i += 1) {
     const response = await fetch(`${base}/auth/google/callback?error=denied`, { redirect: 'manual' });
-    assert.equal(response.status, 400);
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), `${webOrigin}/login?status=oauth-failed`);
   }
   const limitedCallback = await fetch(`${base}/auth/google/callback?error=denied`, { redirect: 'manual' });
   assert.equal(limitedCallback.status, 429);

@@ -1,7 +1,6 @@
 import { ArrowUpRight } from 'lucide-react';
 import { ParameterCoverageView } from './ParameterCoverageView';
 import { ReportLearningNotes } from './ReportLearningNotes';
-import { ReportSpanishExplanation } from './ReportSpanishExplanation';
 import { ReportSpeechButton } from './ReportSpeechButton';
 import type { LanguagePracticeReport, ReportLearningSupport, SessionDetail } from './language-practice-client';
 
@@ -87,12 +86,12 @@ export function PracticeReportContent({ report, session = null, turnsUnavailable
                 <p lang="en" className="min-w-0 whitespace-pre-wrap">{support.suggestedEnglish}</p>
                 <ReportSpeechButton text={support.suggestedEnglish} language="en" label={`Listen to suggestion for turn ${correction.sequence}`} />
               </div> : <div className="grid gap-2"><p className="text-muted-foreground">This saved report contains the original wording below.</p>
-                {saved && <details className="rounded-lg border p-3"><summary className="cursor-pointer text-sm font-medium">Saved wording · Español</summary><p lang="es" className="mt-2 whitespace-pre-wrap">{saved.correctedPhrase}</p></details>}
+                {saved && <p className="whitespace-pre-wrap">{saved.correctedPhrase}</p>}
               </div>}</td>
               <td className="border-b px-4 py-3 leading-6">{support ? <div className="flex items-start gap-2">
                 <p lang="en" className="min-w-0 whitespace-pre-wrap">{support.explanationEn}</p>
-                <ReportSpanishExplanation title={`Turn ${correction.sequence}`} translation={support.translationEs} explanations={[support.explanationEs]} label="Traducción y explicación" />
-              </div> : saved && <details className="rounded-lg border p-3"><summary className="cursor-pointer font-medium">Saved explanation · Español</summary><p lang="es" className="mt-2 whitespace-pre-wrap">{saved.explanation}</p></details>}</td>
+
+              </div> : saved && <p className="whitespace-pre-wrap">{saved.explanation}</p>}</td>
             </tr>;
           })}</tbody>
         </table>

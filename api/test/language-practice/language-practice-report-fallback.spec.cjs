@@ -12,11 +12,11 @@ function evidence(correctedPhrase = 'I am ready.', feedback = 'Use the present f
 
 test('zero turns uses the original empty-session fallback and no unsupported fields', () => {
   assert.deepEqual(buildLanguagePracticeReportFallback([]), {
-    summary: 'La sesión finalizó sin turnos completados, por lo que todavía no hay evidencia suficiente para evaluar el desempeño.',
+    summary: 'The session ended without completed responses. There is not enough evidence to assess performance.',
     corrections: [],
     strengths: [],
     recommendations: [
-      'Realice una nueva práctica y complete al menos una intervención para obtener observaciones pedagógicas específicas.',
+      'Start a new practice and complete at least one response to receive evidence-based feedback.',
     ],
   });
 });
@@ -25,7 +25,7 @@ test('one completed turn preserves exact corrections with neutral count evidence
   assert.deepEqual(buildLanguagePracticeReportFallback([
     turn(7, '  I ready.  ', evidence('  I am ready.  ', '  Use the present form.  ')),
   ]), {
-    summary: 'Se completaron 1 intervención en inglés. El informe conserva 1 corrección concreta respaldada por la sesión.',
+    summary: 'Completed responses: 1. Evidence-linked corrections: 1.',
     corrections: [{
       sequence: 7,
       original: 'I ready.',
@@ -34,18 +34,18 @@ test('one completed turn preserves exact corrections with neutral count evidence
     }],
     strengths: [],
     recommendations: [
-      'Practique nuevamente las frases corregidas y úselas en ejemplos propios antes de la próxima sesión.',
+      'Practise the corrected phrases using your own examples before your next session.',
     ],
   });
 });
 
-test('many turns produce a bounded Spanish summary and exact evidence-backed counts', () => {
+test('many turns produce a bounded English summary and exact evidence-backed counts', () => {
   const report = buildLanguagePracticeReportFallback([
     turn(1, 'She go yesterday.', evidence('She went yesterday.', 'Use past tense.')),
     turn(2, 'They is here.', evidence('They are here.', 'Match the plural subject.')),
     turn(3),
   ]);
-  assert.equal(report.summary, 'Se completaron 3 intervenciones en inglés. El informe conserva 2 correcciones concretas respaldadas por la sesión.');
+  assert.equal(report.summary, 'Completed responses: 3. Evidence-linked corrections: 2.');
   assert.equal(report.corrections.length, 2);
   assert.equal(report.strengths.length, 0);
   assert.equal(report.recommendations.length, 1);
@@ -62,9 +62,9 @@ test('malformed, missing, wrong-shaped, and empty evidence is omitted without in
     turn(6, ' ', evidence()),
   ]);
   assert.equal(report.corrections.length, 0);
-  assert.equal(report.summary, 'Se completaron 6 intervenciones en inglés. El informe conserva 0 correcciones concretas respaldadas por la sesión.');
+  assert.equal(report.summary, 'Completed responses: 6. Evidence-linked corrections: 0.');
   assert.deepEqual(report.recommendations, [
-    'Realice otra sesión sobre el mismo tema y desarrolle sus ideas con ejemplos para ampliar la evidencia.',
+    'Try another session on this topic and develop your ideas with examples.',
   ]);
   assert.doesNotMatch(JSON.stringify(report), /pronunciación|CEFR|A1|B2|fluidez nivel/i);
 });
@@ -88,10 +88,10 @@ test('the report caps corrections at twenty and completed turns at 256', () => {
   const report = buildLanguagePracticeReportFallback(corrections);
   assert.equal(report.corrections.length, 20);
   assert.equal(report.corrections[19].sequence, 20);
-  assert.match(report.summary, /^Se completaron 25 intervenciones/);
+  assert.match(report.summary, /^Completed responses: 25\./);
 
   const bounded = buildLanguagePracticeReportFallback(Array.from({ length: 300 }, (_, index) => turn(index + 1)));
-  assert.match(bounded.summary, /^Se completaron 256 intervenciones/);
+  assert.match(bounded.summary, /^Completed responses: 256\./);
   assert.equal(bounded.strengths.length, 0);
   assert.equal(bounded.recommendations.length, 1);
 });

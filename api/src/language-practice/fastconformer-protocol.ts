@@ -2,7 +2,7 @@ import { isAbsolute } from 'node:path'
 
 export const FASTCONFORMER_MODEL_ID = 'nvidia/stt_en_fastconformer_hybrid_large_pc'
 export const FASTCONFORMER_NO_SPEECH_CODE = 'LANGUAGE_PRACTICE_NO_SPEECH'
-export const MAX_PROTOCOL_LINE_BYTES = 8_192
+export const MAX_PROTOCOL_LINE_BYTES = 131_072
 
 export type ProtocolErrorCode =
   | 'INVALID_LINE'
@@ -94,7 +94,7 @@ export function parseResult(line: string, expectedId: string): FastConformerResu
   }
   if (hasExactKeys(value, ['type', 'id', 'transcript'])) {
     if (typeof value.transcript !== 'string' || value.transcript.trim().length === 0 ||
-        value.transcript.length > 4_000 || !safeText(value.transcript)) {
+        value.transcript.length > 30_000 || !safeText(value.transcript)) {
       fail('INVALID_RESULT')
     }
     return value as FastConformerResult

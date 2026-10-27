@@ -182,7 +182,7 @@ test('digest failure rejects without spawning', async (t) => {
 
 test('startup timeout terminates the fake child and rejects generically', async (t) => {
   const config = await fixture(t);
-  config.startupTimeoutMs = 15;
+  config.startupTimeoutMs = 1000;
   const signals = [];
   const h = harness(config, (_exe, _args, _opts, child) => {
     setImmediate(() => child.emit('spawn'));

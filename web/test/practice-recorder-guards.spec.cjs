@@ -17,12 +17,12 @@ const guards = require('../src/features/language-practice/practice-recorder-guar
 const component = fs.readFileSync(path.join(__dirname, '../src/features/language-practice/PracticeRecorder.tsx'), 'utf8');
 const guardsSource = fs.readFileSync(path.join(__dirname, '../src/features/language-practice/practice-recorder-guards.ts'), 'utf8');
 
-test('recording validity enforces positive payload, 250ms minimum, and 2MiB maximum', () => {
+test('recording validity enforces positive payload, 250ms minimum, and 32MiB maximum', () => {
   assert.equal(guards.isValidRecording(249, 1), false);
   assert.equal(guards.isValidRecording(250, 1), true);
   assert.equal(guards.isValidRecording(20_000, 2 * 1024 * 1024), true);
-  assert.equal(guards.isValidRecording(20_001, 1), false);
-  assert.equal(guards.isValidRecording(250, 2 * 1024 * 1024 + 1), false);
+  assert.equal(guards.isValidRecording(600_001, 1), false);
+  assert.equal(guards.isValidRecording(250, 32 * 1024 * 1024 + 1), false);
   assert.equal(guards.isValidRecording(Number.NaN, 1), false);
   assert.equal(guards.isValidRecording(500, 0), false);
 });
@@ -66,8 +66,8 @@ test('component source uses audio-only capture, supported MIME selection, and no
   assert.match(component, /getUserMedia\(\{ audio: true, video: false \}\)/);
   assert.match(component, /operation === operationRef\.current && !disposedRef\.current/);
   assert.match(component, /useEffect\([\s\S]*?disposedRef\.current = true/);
-  assert.match(guardsSource, /MAX_RECORDING_MS = 20_000/);
-  assert.match(guardsSource, /MAX_AUDIO_BYTES = 2 \* 1024 \* 1024/);
+  assert.match(guardsSource, /MAX_RECORDING_MS = 600_000/);
+  assert.match(guardsSource, /MAX_AUDIO_BYTES = 32 \* 1024 \* 1024/);
   assert.match(component, /requestedDurationRef\.current = performance\.now\(\) - startedAtRef\.current/);
   assert.match(component, /MAX_RECORDING_MS - 500/);
   assert.doesNotMatch(component, /fetch\(|XMLHttpRequest|speechSynthesis/);
